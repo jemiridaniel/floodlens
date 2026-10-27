@@ -18,7 +18,7 @@ def test_clear_mask_drops_cloud_and_shadow():
 def test_optical_water_ignores_cloudy_bright_pixels():
     scl = np.array([6, 9, 5])
     green, nir = np.array([1, 1200, 1200.0]), np.array([1, 300, 300.0])
-    assert w.optical_water(scl, green, nir).tolist() == [True, False, True]
+    assert w.optical_water(scl, green, nir, buffer_px=0).tolist() == [True, False, True]
 
 
 def test_otsu_splits_bimodal():
@@ -67,3 +67,16 @@ def test_ground_level_ignores_rooftops():
     h = w.height_above_water_m(dem, water, around_site=around)
     assert h == pytest.approx(2.0, abs=0.5)  # ground, not roof height
     assert w.height_above_water_m(dem, water, around_site=water) == 0.0  # site area all water
+
+
+def test_optical_water_drops_shadow_next_to_cloud():
+    scl = np.full((60, 60), 5)
+    scl[:, :10] = 9            # cloud on the left
+    scl[:, 12:16] = 6          # "water" 2-5 px from the cloud: really shadow
+    scl[:, 40:45] = 6          # real water, 30 px from the cloud
+    green = np.full((60, 60), 900.0)
+    nir = np.full((60, 60), 2500.0)
+    water = w.optical_water(scl, green, nir, buffer_px=10)
+    assert not water[:, 12:16].any()
+    assert water[:, 40:45].all()
+    assert w.clear_mask(scl, 10)[:, 12:20].sum() == 0

@@ -22,7 +22,7 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
     if layers.optical is not None:
         o = layers.optical
         water_now = w.optical_water(o.scl, o.green, o.nir)
-        clear = w.clear_mask(o.scl)
+        clear = w.clear_mask(o.scl, w.CLOUD_BUFFER_PX)
         share = w.share_within(water_now, r250, clear)
         if share is not None:
             out.append(Metric(id="m_water_now_250", label="Water within 250 m, clear dry-season image",
@@ -49,16 +49,17 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
                               value=mean, unit="%", source="JRC Global Surface Water"))
         regular_water = np.nan_to_num(occ) >= JRC_PERMANENT
 
-    # Distance and height use the best water map available: regular (JRC) water, plus what is wet now.
-    ref_water = None
-    for m in (regular_water, water_now):
-        if m is not None:
-            ref_water = m if ref_water is None else ref_water | m
+    # Distance and height use regular water from 37 years of JRC history. A single optical
+    # image is only the fallback: one date's water can be shadow, or a temporary puddle.
+    if regular_water is not None and regular_water.any():
+        ref_water, ref_source = regular_water, "JRC Global Surface Water"
+    else:
+        ref_water, ref_source = water_now, "Sentinel-2 (no JRC water in tile)"
     if ref_water is not None:
         d = w.distance_to_water_m(ref_water, g.res_m)
         if d is not None:
             out.append(Metric(id="m_dist_water", label="Distance to nearest regular water", value=d, unit="m",
-                              source="JRC + Sentinel-2", decimals=0))
+                              source=ref_source, decimals=0))
         if layers.dem is not None:
             h = w.height_above_water_m(layers.dem, ref_water, around_site=ring_mask(g, GROUND_RADIUS_M))
             if h is not None:

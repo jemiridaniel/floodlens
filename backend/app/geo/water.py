@@ -28,14 +28,25 @@ def ndwi(green: np.ndarray, nir: np.ndarray) -> np.ndarray:
     return (g - n) / np.maximum(g + n, 1e-6)
 
 
-def clear_mask(scl: np.ndarray) -> np.ndarray:
-    """Pixels Sentinel-2 classified as usable (not cloud, shadow, cirrus or no data)."""
-    return ~np.isin(scl.astype(int), SCL_UNUSABLE)
+CLOUD_BUFFER_PX = 10  # 100 m at 10 m: cloud edges and shadows are often mislabelled as water
 
 
-def optical_water(scl: np.ndarray, green: np.ndarray, nir: np.ndarray, ndwi_min: float = 0.1) -> np.ndarray:
-    """Water from Sentinel-2: SCL water class, or a clear pixel with NDWI above ndwi_min."""
-    return (scl.astype(int) == SCL_WATER) | ((ndwi(green, nir) > ndwi_min) & clear_mask(scl))
+def clear_mask(scl: np.ndarray, buffer_px: int = 0) -> np.ndarray:
+    """Pixels Sentinel-2 classified as usable (not cloud, shadow, cirrus or no data),
+    optionally also dropping a buffer of buffer_px around every unusable pixel."""
+    bad = np.isin(scl.astype(int), SCL_UNUSABLE)
+    if buffer_px > 0 and bad.any():
+        bad = ndimage.binary_dilation(bad, iterations=buffer_px)
+    return ~bad
+
+
+def optical_water(scl: np.ndarray, green: np.ndarray, nir: np.ndarray, ndwi_min: float = 0.1,
+                  buffer_px: int = CLOUD_BUFFER_PX) -> np.ndarray:
+    """Water from Sentinel-2: SCL water class or NDWI above ndwi_min, on pixels clear of
+    cloud and shadow by at least buffer_px. (In the first Lagos run, cloud shadow over
+    the city was labelled water 72 m from a site that is 500+ m from any real water.)"""
+    usable = clear_mask(scl, buffer_px)
+    return ((scl.astype(int) == SCL_WATER) | (ndwi(green, nir) > ndwi_min)) & usable
 
 
 def to_db(linear: np.ndarray) -> np.ndarray:

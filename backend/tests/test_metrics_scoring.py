@@ -61,3 +61,13 @@ def test_lower_height_is_riskier():
 def test_full_risk_everywhere_is_100():
     metrics = [Metric(id=f.metric_id, label="", value=f.full_at, unit="", source="") for f in FEATURES]
     assert score(metrics).score == pytest.approx(100, abs=0.5)
+
+
+def test_distance_prefers_jrc_history_over_one_image(layers):
+    import numpy as np
+    layers.optical.scl[95:100, 95:100] = 6  # one-date "water" right next to the site
+    m = by_id(compute_metrics(layers))
+    assert m["m_dist_water"].value == pytest.approx(300, abs=10)
+    assert m["m_dist_water"].source == "JRC Global Surface Water"
+    layers.jrc_occurrence = np.zeros_like(layers.jrc_occurrence)  # no JRC water: fall back
+    assert by_id(compute_metrics(layers))["m_dist_water"].value < 60

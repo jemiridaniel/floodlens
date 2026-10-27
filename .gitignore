@@ -1,0 +1,26 @@
+# secrets
+.env
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# data and outputs
+data/cache/
+out/
+*.tif
+*.png
+!docs/**/*.png
+
+# node / web
+node_modules/
+.next/
+
+# os
+.DS_Store

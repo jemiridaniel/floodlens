@@ -2,8 +2,34 @@
 
 Each feature is mapped to 0-1 risk by a simple ramp, weighted, and summed to 0-100.
 Missing features are dropped and the remaining weights rescaled; confidence falls
-with the share of weight that was missing. Weights are hand-set for now and get
-tuned on known flooded / dry validation sites (data/validation_sites.csv).
+with the share of weight that was missing.
+
+The weights below are REASONED PRIORS, not fitted values. Nothing here is tuned to the
+validation set: four sites cannot support fitting eight weights, and tuning on them would
+turn the one honest test we have into a training set. They encode one finding and one
+piece of physical reasoning.
+
+The finding: the first validation run scored four flood-verified Lagos sites at 0.0, 1.2,
+2.1 and 30.9 out of 100. Every feature then in the formula measured proximity to a body
+of water, so the formula could only see riverine and coastal flooding. Three of the four
+sites have no water at all within 2 km; they flood because rain cannot drain away. That is
+pluvial flooding, and it was worth 0 weight.
+
+The reasoning behind the split:
+- Pluvial 0.45. Rain floods a site when the water has somewhere to collect (a local dip,
+  m_local_low_spot, the strongest single signal at 0.20) and nowhere to soak away
+  (impervious ground, m_built_up_500, 0.15). Wetland or mangrove within 500 m,
+  m_wetland_500 at 0.10, marks ground that was drained or reclaimed and still sits low.
+- Riverine and coastal 0.45, the same share, split across the four water-body features.
+  This is the better-measured half -- 37 years of JRC history is stronger evidence than a
+  land-cover proxy -- but it describes a kind of flooding that most inland Lagos
+  collateral is not exposed to, so it does not deserve a larger share.
+- Rainfall 0.10. The trigger for both, but weakly site-specific: one storm covers the
+  whole city, so it separates years, not addresses.
+
+Re-check all of this against data/validation_sites.csv (scripts/validate.py) once the set
+has dry sites and hand-placed pins. Until then these are priors, and the right fix for a
+bad score is a better measurement, not a bigger weight.
 """
 from __future__ import annotations
 
@@ -21,15 +47,25 @@ class Feature:
 
     def risk(self, value: float) -> float:
         span = self.full_at - self.zero_at
-        return min(max((value - self.zero_at) / span, 0.0), 1.0)
+        r = min(max((value - self.zero_at) / span, 0.0), 1.0)
+        return 0.0 if r == 0 else r  # a descending ramp (full_at < zero_at) yields -0.0
 
 
 FEATURES: tuple[Feature, ...] = (
-    Feature("m_water_history_500", 0.25, zero_at=0, full_at=30),
-    Feature("m_wet_water_250", 0.25, zero_at=0, full_at=30),
-    Feature("m_height_above_water", 0.20, zero_at=10, full_at=0.5),
-    Feature("m_dist_water", 0.15, zero_at=1500, full_at=100),
-    Feature("m_max_daily_rain", 0.15, zero_at=60, full_at=200),
+    # Pluvial: rain with somewhere to collect and nowhere to drain. 0.45 total.
+    # A 3 m dip is a serious sink; 20-90% built-up spans "some open ground left" to
+    # "effectively sealed"; any wetland in a 500 m urban ring is already a signal, so
+    # 20% is treated as full risk.
+    Feature("m_local_low_spot", 0.20, zero_at=0, full_at=-3),
+    Feature("m_built_up_500", 0.15, zero_at=20, full_at=90),
+    Feature("m_wetland_500", 0.10, zero_at=0, full_at=20),
+    # Riverine and coastal: water arriving from a body of water. 0.45 total.
+    Feature("m_water_history_500", 0.15, zero_at=0, full_at=30),
+    Feature("m_wet_water_250", 0.10, zero_at=0, full_at=30),
+    Feature("m_dist_water", 0.10, zero_at=1500, full_at=100),
+    Feature("m_height_above_water", 0.10, zero_at=10, full_at=0.5),
+    # The trigger for both, but it rains on the whole city at once. 0.10.
+    Feature("m_max_daily_rain", 0.10, zero_at=60, full_at=200),
 )
 
 TIER_CUTS = ((75, Tier.severe), (50, Tier.high), (25, Tier.moderate), (0, Tier.low))

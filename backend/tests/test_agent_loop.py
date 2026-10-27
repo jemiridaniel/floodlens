@@ -67,16 +67,17 @@ def call(tool: str, usage: FakeUsage | None = None, **args) -> FakeResponse:
                         usage=usage or FakeUsage())
 
 
-# Only numbers the metrics or the score state: 300 m, 2.0 m, 74.6, 50.0%, 25.0 points.
+# Only metric display values: 300 m, 2.0 m, 50.0%, and the 250 m ring. Deliberately no
+# score or contribution figures, so rebalancing the weights cannot break these tests.
 GOOD = {
     "summary": "The site sits 300 m from regular water and just 2.0 m above it, "
-               "so the risk tier is High at 74.6 out of 100.",
+               "so the risk tier is High.",
     "drivers": [
         {"metric_id": "m_wet_water_250", "why": "Radar saw 50.0% of the 250 m ring under water on a wet date."},
         {"metric_id": "m_height_above_water", "why": "The ground is only 2.0 m above the nearby water surface."},
     ],
     "action": "approve_with_insurance",
-    "rationale": "Half the ring floods on a wet date, which alone adds 25.0 points.",
+    "rationale": "Half the ring floods on a wet date, which is the strongest single signal.",
     "caveats": ["Radar can miss water trapped between buildings."],
 }
 BAD_NUMBER = {**GOOD, "summary": "The site is 42 m from water and floods often."}
@@ -130,7 +131,8 @@ def test_two_failures_fall_back_to_metrics_only(assessment, layers):
     assert run.report.explained is False
     assert run.calls == 2
     assert any("42" in e for e in run.errors)
-    assert "74.6" in run.report.summary and run.report.action in ALLOWED_ACTIONS[assessment.score.tier]
+    assert str(assessment.score.score) in run.report.summary
+    assert run.report.action in ALLOWED_ACTIONS[assessment.score.tier]
     assert any("did not pass" in c or "failed the verifier" in c for c in run.report.caveats)
 
 

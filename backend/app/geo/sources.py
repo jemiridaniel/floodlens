@@ -45,6 +45,7 @@ class SiteLayers:
     radar: Radar | None = None
     jrc_occurrence: np.ndarray | None = None  # 0-100 % of years with water, NaN = no data
     dem: np.ndarray | None = None  # metres
+    landcover: np.ndarray | None = None  # ESA WorldCover class codes, 0 = no data
     daily_rain_mm: list[tuple[str, float]] = field(default_factory=list)
     item_ids: dict[str, str] = field(default_factory=dict)  # layer -> STAC item id, for evidence
     notes: list[str] = field(default_factory=list)
@@ -102,7 +103,7 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
     )
 
 
-RADAR_WINDOW_DAYS = 6  # Sentinel-1 revisit over Lagos, so a given date is reachable
+RADAR_WINDOW_DAYS = 12  # two Sentinel-1 revisit cycles: a named flood date is usually reachable
 
 
 def radar_near(catalog, site: Site, day: str, window_days: int = RADAR_WINDOW_DAYS) -> Radar | None:
@@ -140,6 +141,19 @@ def dem(catalog, site: Site) -> tuple[np.ndarray, str] | None:
     if item is None:
         return None
     return read_window(item.assets["data"].href, site, GRID), item.id
+
+
+def landcover(catalog, site: Site) -> tuple[np.ndarray, str] | None:
+    """ESA WorldCover 10 m land cover classes (verified against the STAC catalog: collection
+    esa-worldcover, asset "map", classes 50 built-up / 90 herbaceous wetland / 95 mangroves).
+    One item per product year, so take the most recent."""
+    items = _search(catalog, "esa-worldcover", site)
+    items.sort(key=lambda i: i.properties.get("start_datetime") or i.properties.get("datetime") or "",
+               reverse=True)
+    item = covering_item(items, site)
+    if item is None:
+        return None
+    return read_window(item.assets["map"].href, site, GRID, Resampling.nearest), item.id
 
 
 def daily_rain(site: Site, start: str, end: str, client: httpx.Client | None = None) -> list[tuple[str, float]]:
@@ -189,7 +203,7 @@ class PlanetaryComputerSource:
             layers.optical = clearest_optical(catalog, site, optical_dates)
         except Exception as exc:  # one failed layer must not sink the assessment
             layers.notes.append(f"optical unavailable: {exc.__class__.__name__}: {exc}")
-        for name, fn in (("jrc_occurrence", jrc_occurrence), ("dem", dem)):
+        for name, fn in (("jrc_occurrence", jrc_occurrence), ("dem", dem), ("landcover", landcover)):
             try:
                 got = fn(catalog, site)
             except Exception as exc:

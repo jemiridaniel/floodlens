@@ -24,10 +24,13 @@ from app.scoring import FEATURES
 SITES_CSV = Path(__file__).resolve().parents[2] / "data" / "validation_sites.csv"
 SCORED = [f.metric_id for f in FEATURES]  # the five metrics the score is built from
 HEADS = {
+    "m_local_low_spot": "lowspot",
+    "m_built_up_500": "built%",
+    "m_wetland_500": "wetlnd%",
     "m_water_history_500": "hist%",
-    "m_wet_water_250": "wet%",
-    "m_height_above_water": "height",
+    "m_wet_water_250": "radar%",
     "m_dist_water": "dist",
+    "m_height_above_water": "height",
     "m_max_daily_rain": "rain",
 }
 
@@ -69,15 +72,15 @@ def run_site(site: dict[str, str]) -> Row:
 
 
 def print_table(rows: list[Row]) -> None:
-    head = f"  {'site':<36s} {'expected':<8s} {'score':>6s} {'tier':<9s}"
+    head = f"  {'site':<30s} {'exp':<6s} {'score':>6s} {'tier':<9s}"
     head += "".join(f"{HEADS[m]:>8s}" for m in SCORED)
     print(f"\n{head}")
     print("  " + "-" * (len(head) - 2))
     for r in rows:
         if r.error:
-            print(f"  {r.label[:36]:<36s} {r.expected:<8s} {'ERROR':>6s} {r.error[:40]}")
+            print(f"  {r.label[:30]:<30s} {r.expected:<6s} {'ERROR':>6s} {r.error[:46]}")
             continue
-        line = f"  {r.label[:36]:<36s} {r.expected:<8s} {r.score:>6.1f} {r.tier:<9s}"
+        line = f"  {r.label[:30]:<30s} {r.expected:<6s} {r.score:>6.1f} {r.tier:<9s}"
         line += "".join(f"{r.values[m]:>8s}" for m in SCORED)
         print(line)
 

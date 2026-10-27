@@ -109,6 +109,18 @@ def ground_level_m(dem: np.ndarray, area: np.ndarray, pct: float = 10) -> float 
     return None if vals.size == 0 else float(np.percentile(vals, pct))
 
 
+def low_spot_m(dem: np.ndarray, around_site: np.ndarray, neighbourhood: np.ndarray) -> float | None:
+    """Ground level at the site minus the median ground level around it, in metres.
+
+    Negative means the site sits in a dip, where rain collects even with no river or
+    lagoon nearby. This is the pluvial counterpart to height_above_water_m: Lagos floods
+    that have no water body in view still have somewhere for the water to pool.
+    """
+    near = ground_level_m(dem, around_site)
+    around = ground_level_m(dem, neighbourhood, pct=50)
+    return None if near is None or around is None else near - around
+
+
 def height_above_water_m(dem: np.ndarray, water: np.ndarray, around_site: np.ndarray | None = None) -> float | None:
     """Ground level near the site minus the median surface of nearby water. None if no water."""
     if not water.any():

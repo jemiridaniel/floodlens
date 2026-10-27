@@ -10,6 +10,9 @@ from .schemas import Metric
 
 JRC_PERMANENT = 50  # % occurrence above which a pixel counts as regular water
 GROUND_RADIUS_M = 100  # area around the site used to estimate ground level
+NEIGHBOURHOOD_M = 1000  # the 2 km grid's inscribed circle: the site's surroundings
+WORLDCOVER_BUILT_UP = 50  # ESA WorldCover class codes
+WORLDCOVER_WETLAND = (90, 95)  # herbaceous wetland, mangroves
 
 
 def compute_metrics(layers: SiteLayers) -> list[Metric]:
@@ -70,14 +73,48 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
         ref_water, ref_source = water_now, "Sentinel-2 (no JRC water in tile)"
     if ref_water is not None:
         d = w.distance_to_water_m(ref_water, g.res_m)
-        if d is not None:
+        if d is None:
+            # No water anywhere in view is a measurement, not a gap. The nearest regular
+            # water is at least the distance from the site to the edge of what we looked
+            # at, so report that. Dropping the metric instead would rescale its weight
+            # onto the other features, which is how four verified floods scored Low.
+            # Height above water is the one thing we genuinely cannot measure here.
+            edge_m = g.size_m / 2
+            seen = "JRC Global Surface Water and Sentinel-2" if regular_water is not None else "Sentinel-2"
+            out.append(Metric(id="m_dist_water", label=f"No regular water within {edge_m / 1000:g} km",
+                              value=edge_m, unit="m", decimals=0,
+                              source=f"{seen}: no water in the {g.size_m / 1000:g} km grid"))
+        else:
             out.append(Metric(id="m_dist_water", label="Distance to nearest regular water", value=d, unit="m",
                               source=ref_source, decimals=0))
-        if layers.dem is not None:
-            h = w.height_above_water_m(layers.dem, ref_water, around_site=ring_mask(g, GROUND_RADIUS_M))
-            if h is not None:
-                out.append(Metric(id="m_height_above_water", label="Ground height above nearest water", value=h,
-                                  unit="m", source=f"Copernicus DEM GLO-30, low point within {GROUND_RADIUS_M} m"))
+            if layers.dem is not None:
+                h = w.height_above_water_m(layers.dem, ref_water, around_site=ring_mask(g, GROUND_RADIUS_M))
+                if h is not None:
+                    out.append(Metric(id="m_height_above_water", label="Ground height above nearest water", value=h,
+                                      unit="m",
+                                      source=f"Copernicus DEM GLO-30, low point within {GROUND_RADIUS_M} m"))
+
+    # Pluvial risk: where rain collects, and whether it can soak away.
+    if layers.dem is not None:
+        low = w.low_spot_m(layers.dem, ring_mask(g, GROUND_RADIUS_M), ring_mask(g, NEIGHBOURHOOD_M))
+        if low is not None:
+            out.append(Metric(
+                id="m_local_low_spot", value=low, unit="m",
+                label=f"Ground at the site against the median within {NEIGHBOURHOOD_M / 1000:g} km "
+                      "(negative = a dip)",
+                source=f"Copernicus DEM GLO-30, {GROUND_RADIUS_M} m low point vs the surrounding median"))
+
+    if layers.landcover is not None:
+        lc = layers.landcover.astype(int)
+        known = lc > 0  # 0 is outside the tile, not a class
+        built = w.share_within(lc == WORLDCOVER_BUILT_UP, r500, known)
+        if built is not None:
+            out.append(Metric(id="m_built_up_500", label="Built-up land within 500 m", value=100 * built,
+                              unit="%", source="ESA WorldCover 10 m", decimals=0))
+        wetland = w.share_within(np.isin(lc, WORLDCOVER_WETLAND), r500, known)
+        if wetland is not None:
+            out.append(Metric(id="m_wetland_500", label="Wetland or mangrove within 500 m", value=100 * wetland,
+                              unit="%", source="ESA WorldCover 10 m"))
 
     if layers.daily_rain_mm:
         day, mm = max(layers.daily_rain_mm, key=lambda x: x[1])

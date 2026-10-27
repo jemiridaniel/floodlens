@@ -111,6 +111,43 @@ def test_a_given_wet_date_replaces_the_rainfall_guess(monkeypatch):
     assert asked == ["2026-07-15", "2026-06-30"]
 
 
-def test_validate_reports_the_five_scored_metrics():
-    assert [f.metric_id for f in FEATURES] == [
-        "m_water_history_500", "m_wet_water_250", "m_height_above_water", "m_dist_water", "m_max_daily_rain"]
+def test_validate_has_a_column_head_for_every_scored_metric():
+    """validate.py prints one column per FEATURE, so a new feature needs a heading."""
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "_validate", Path(__file__).resolve().parents[1] / "scripts" / "validate.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # its dataclass needs the module importable while it runs
+    spec.loader.exec_module(mod)
+    assert mod.SCORED == [f.metric_id for f in FEATURES]
+    assert set(mod.HEADS) == set(mod.SCORED)
+
+
+def test_radar_window_is_wide_enough_for_a_named_flood_date():
+    """6 days missed the Lekki flood date; two revisit cycles is the point of 12."""
+    from app.geo.sources import RADAR_WINDOW_DAYS
+    assert RADAR_WINDOW_DAYS == 12
+
+
+def test_worldcover_picks_the_newest_product_year(monkeypatch):
+    """Planetary Computer has one esa-worldcover item per year per tile (2020 v100,
+    2021 v200). Taking the first search hit would be arbitrary."""
+    from app.geo import sources
+    from app.geo.aoi import Site
+
+    class Item:
+        def __init__(self, item_id, when):
+            self.id, self.bbox = item_id, (3.0, 6.0, 4.0, 7.0)
+            self.properties = {"start_datetime": when}
+            self.assets = {"map": type("A", (), {"href": f"href://{item_id}"})()}
+
+    items = [Item("ESA_WorldCover_10m_2020_v100", "2020-01-01T00:00:00Z"),
+             Item("ESA_WorldCover_10m_2021_v200", "2021-01-01T00:00:00Z")]
+    monkeypatch.setattr(sources, "_search", lambda *a, **k: items)
+    read: list[str] = []
+    monkeypatch.setattr(sources, "read_window", lambda href, *a, **k: read.append(href) or "grid")
+
+    got = sources.landcover(object(), Site(6.5, 3.3))
+    assert got == ("grid", "ESA_WorldCover_10m_2021_v200")
+    assert read == ["href://ESA_WorldCover_10m_2021_v200"]

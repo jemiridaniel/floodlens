@@ -58,6 +58,7 @@ class Row:
     label: str
     expected: str
     quality: str = "ok"  # an "approximate" pin is shown but kept out of the summary
+    notes: str = ""  # layer fetch failures: a run with these is not comparable
     score: float | None = None
     tier: str = ""
     confidence: str = ""
@@ -69,6 +70,12 @@ class Row:
 def read_sites(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as f:
         return [r for r in csv.DictReader(f) if r.get("site_id")]
+
+
+def degraded(row: Row) -> bool:
+    """Lost a satellite layer this run. Planetary Computer fails transiently, and a
+    rescaled score is not comparable with a complete one, so it must never pass silently."""
+    return any(m in row.missing for m in ("m_water_history_500", "m_built_up_500", "m_local_low_spot"))
 
 
 def run_site(site: dict[str, str], history: bool = False) -> Row:
@@ -93,6 +100,7 @@ def run_site(site: dict[str, str], history: bool = False) -> Row:
     row.confidence = result.score.confidence
     row.values = {mid: (by_id[mid].display() if mid in by_id else "-") for mid in SCORED}
     row.missing = " ".join(result.score.missing)
+    row.notes = " | ".join(result.notes)
     return row
 
 
@@ -144,7 +152,10 @@ def print_baseline(flood: list[Row], base: list[Row]) -> None:
     if not scores or not floods:
         print("\n  No baseline comparison: nothing scored.")
         return
+    hurt = sum(1 for r in base if degraded(r))
     q = np.percentile(scores, [0, 25, 50, 75, 100])
+    if hurt:
+        print(f"\n  ! {hurt} of {len(base)} baseline points lost a satellite layer this run")
     print(f"\n  BASELINE  n={len(scores)} random built-up points in Lagos (seed {BASELINE_SEED})")
     print(f"    min {q[0]:.1f}   p25 {q[1]:.1f}   median {q[2]:.1f}   p75 {q[3]:.1f}   max {q[4]:.1f}")
 
@@ -175,11 +186,11 @@ def write_csv(path: Path, rows: list[Row]) -> None:
     with path.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["site_id", "label", "expected", "geocode_quality", "score", "tier",
-                    "confidence", *SCORED, "missing", "error"])
+                    "confidence", *SCORED, "missing", "notes", "error"])
         for r in rows:
             w.writerow([r.site_id, r.label, r.expected, r.quality, "" if r.score is None else r.score,
                         r.tier, r.confidence, *[(r.values or {}).get(m, "") for m in SCORED],
-                        r.missing, r.error])
+                        r.missing, r.notes, r.error])
 
 
 def print_history(rows: list[Row], base: list[Row]) -> None:
@@ -234,6 +245,10 @@ def print_table(rows: list[Row]) -> None:
 
     for r in (r for r in rows if r.quality == "approximate"):
         print(f"  ~ {r.label} is left out of the summary until it has a real pin")
+    hurt = [r for r in rows if r.score is not None and degraded(r)]
+    for r in hurt:
+        print(f"  ! {r.label[:40]} lost a layer this run ({r.missing}): its score is rescaled "
+              "and not comparable")
     scored = [r for r in rows if r.score is not None and r.quality != "approximate"]
     by_class = {c: [r.score for r in scored if r.expected == c] for c in ("flood", "dry")}
     print()

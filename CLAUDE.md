@@ -16,7 +16,7 @@ Flood-risk checks on loan collateral for Nigerian microfinance lenders. Entry fo
 1. **Code measures, the LLM explains.** Every number in a report comes from `app/metrics.py`. The score is a fixed formula in `app/scoring.py`. Muse Spark never invents or changes numbers or tiers.
 2. **Verifier gate.** `app/agent/verifier.py` rejects reports with numbers not in the metrics, a wrong tier, or an action the tier does not allow. Keep it strict. Dates are the one special case: a `YYYY-MM-DD` token is allowed only if some metric's label or source states it, and dates are cut from the text before the number rule runs, so `2025-06-14` can never make `6` or `14` quotable. Nothing else in a label or source is quotable — a source reading `threshold -14.0 dB` does not make `14%` a measured value.
 3. **SAM 3.1 is not used to measure site water.** A pre-build test (`docs/day0-sam-test.md`) showed it finds nothing at 2 km / 10 m and only the lagoon at 5 km. SAM is for site photos and a 5 km context map.
-4. **The agent explains, it never measures.** `app/agent/loop.py` hands Muse Spark the metrics and the evidence PNGs and takes back one `submit_report` call. Numbers, tier and allowed actions are fixed before the model is called; `submit_report`'s action enum is the tier's allowed actions, so a disallowed action cannot even be expressed. Every report goes through the verifier: one rejection is retried with the errors, a second returns a metrics-only report with `explained: false`.
+4. **The agent explains, it never measures.** `app/agent/loop.py` hands Muse Spark the metrics and the evidence PNGs and takes back one `submit_report` call. Numbers, tier and allowed actions are fixed before the model is called; `submit_report`'s action enum is the tier's allowed actions, so a disallowed action cannot even be expressed. The tool is `strict: true`, so the API enforces the field types and only content errors should reach the verifier. Every report goes through the verifier: one rejection is retried with the errors, a second returns a metrics-only report with `explained: false`. `_report_schema` must stay inside the strict subset or the call 400s; a test guards that.
 5. **Cloud is normal over Lagos.** Optical water uses Sentinel-2 SCL and only clear pixels; radar and JRC history are core inputs. Every layer is optional and the score rescales weights, lowering confidence.
 
 ## Layout
@@ -69,7 +69,7 @@ Prices (USD per 1M tokens, `PRICES` in `app/agent/loop.py`, looked up by the mod
 | `muse-spark-1.3` | 1.25 | 0.15 | 4.25 |
 | `muse-spark-1.3-contributor` | 0.10 | 0.002 | 0.20 |
 
-Reasoning effort is `FLOODLENS_REASONING_EFFORT` (default `low`), sent as `reasoning={"effort": ...}`; reasoning tokens come back in `output_tokens_details.reasoning_tokens` and are counted in the run. `max` is not available on the Contributor variant.
+Reasoning effort is `FLOODLENS_REASONING_EFFORT` (default `medium`), sent as `reasoning={"effort": ...}`; reasoning tokens come back in `output_tokens_details.reasoning_tokens` and are counted in the run. `max` is not available on the Contributor variant. Low was not cheaper in practice on Lagos Island: it needed a verifier retry and so used more input tokens than medium.
 
 Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: https://dev.meta.ai/docs (tool calling, structured output, image understanding). Cookbook: https://github.com/meta-models/meta-model-cookbook (SAM example in `07_sam/01_api_basics`). Budget: $150 Meta credit, about $0.06 per assessment.
 

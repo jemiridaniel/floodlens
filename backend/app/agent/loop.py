@@ -40,8 +40,9 @@ MAX_VERIFY_ATTEMPTS = 2  # one submission, then one retry carrying the verifier'
 DETAIL_CHARS = 160  # steps are for display: keep each result short
 
 # Reasoning effort (dev.meta.ai/docs/reasoning). "none" is rejected by Spark, and "max"
-# is not available on the Contributor variant. Default low: this is a short explain task
-# over numbers the code already computed, so deep reasoning buys little.
+# is not available on the Contributor variant. Default medium: on Lagos Island, low spent
+# more input tokens than medium overall because it needed a retry, and medium's reports
+# named more of the drivers. See config.FLOODLENS_REASONING_EFFORT.
 REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
@@ -139,6 +140,12 @@ def _tools(views: list[str], allowed: list[Action]) -> list[dict[str, Any]]:
         "type": "function",
         "name": "submit_report",
         "description": "Submit the finished report. Call this exactly once, last.",
+        # strict: the API enforces the field types, so a wrong-typed report never reaches
+        # us (dev.meta.ai/docs/structured-output). _report_schema stays inside the strict
+        # subset: plain object root, additionalProperties false and a complete `required`
+        # on every object, no allOf/oneOf. test_report_schema_is_strict_compatible guards
+        # that, because breaking it shows up only as an HTTP 400 on a real call.
+        "strict": True,
         "parameters": _report_schema(allowed),
     })
     return tools
@@ -378,13 +385,17 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
 
             t1 = time.monotonic()
             report, errors = _parse_report(call.arguments, assessment)
+            # The schema is enforced by the API, so this only fires if strict let something
+            # through. Such a report is malformed, not merely wrong: it never reaches the
+            # verifier, whose job is the content.
+            kind = "schema" if report is None else "verify"
             if report is not None and not errors:
                 verdict = verify(report.text(), stated_tier(report.text(), assessment.score.tier),
                                  report.action.value, assessment.metrics, assessment.score, extra_allowed)
                 errors = verdict.errors
             ok = report is not None and not errors
-            add_step("verify", "verifier", "accepted" if ok else "; ".join(errors),
-                     int(1000 * (time.monotonic() - t1)))
+            add_step(kind, "submit_report" if kind == "schema" else "verifier",
+                     "accepted" if ok else "; ".join(errors), int(1000 * (time.monotonic() - t1)))
             if ok:
                 return finish(report, [])
             rejections += 1

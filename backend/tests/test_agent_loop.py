@@ -234,18 +234,18 @@ def test_prices_come_from_the_table_for_the_model_used():
     assert loop.cost_usd("some-unlisted-model", m, m) == 0.0  # logged, never guessed
 
 
-def test_reasoning_effort_defaults_to_low_and_follows_the_env(assessment, layers, monkeypatch):
+def test_reasoning_effort_defaults_to_medium_and_follows_the_env(assessment, layers, monkeypatch):
     monkeypatch.delenv("FLOODLENS_REASONING_EFFORT", raising=False)
-    client = FakeClient(call("submit_report", **GOOD))
-    run = loop.explain(assessment, layers, client=client)
-    assert client.requests[0]["reasoning"] == {"effort": "low"}
-    assert run.reasoning_effort == "low"
-
-    monkeypatch.setenv("FLOODLENS_REASONING_EFFORT", "medium")
     client = FakeClient(call("submit_report", **GOOD))
     run = loop.explain(assessment, layers, client=client)
     assert client.requests[0]["reasoning"] == {"effort": "medium"}
     assert run.reasoning_effort == "medium"
+
+    monkeypatch.setenv("FLOODLENS_REASONING_EFFORT", "low")
+    client = FakeClient(call("submit_report", **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+    assert client.requests[0]["reasoning"] == {"effort": "low"}
+    assert run.reasoning_effort == "low"
 
 
 def test_cached_and_reasoning_tokens_are_recorded_and_priced(assessment, layers):
@@ -271,3 +271,59 @@ def test_a_report_may_quote_a_date_the_metrics_state(assessment, layers):
     run = loop.explain(assessment, layers, client=client)
     assert run.report.explained is False
     assert any("2019-08-01" in e for e in run.errors)
+
+
+def test_submit_report_asks_the_api_to_enforce_the_schema(assessment, layers):
+    client = FakeClient(call("submit_report", **GOOD))
+    loop.explain(assessment, layers, client=client)
+    tools = {t["name"]: t for t in client.requests[0]["tools"]}
+    assert tools["submit_report"]["strict"] is True
+    # the read-only tools are not strict: they take no free-form content worth constraining
+    assert "strict" not in tools["get_metrics"]
+
+
+def _strict_violations(node, path="root", root=True):
+    """The four rules from dev.meta.ai/docs/structured-output."""
+    bad = []
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            if node.get("additionalProperties") is not False:
+                bad.append(f"{path}: additionalProperties is not false")
+            if set(node.get("properties", {})) != set(node.get("required", [])):
+                bad.append(f"{path}: required does not list every property")
+        bad += [f"{path}: {k} is not supported" for k in ("allOf", "oneOf") if k in node]
+        if root:
+            bad += [f"root: top-level {k}" for k in ("anyOf", "oneOf", "allOf", "enum", "not") if k in node]
+        for k, v in node.items():
+            bad += _strict_violations(v, f"{path}.{k}", root=False)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            bad += _strict_violations(v, f"{path}[{i}]", root=False)
+    return bad
+
+
+def test_report_schema_stays_inside_the_strict_subset():
+    """A schema outside the subset fails the whole request with an HTTP 400, which would
+    only show up on a real call, so check it here."""
+    from app.schemas import Action
+    assert _strict_violations(loop._report_schema(list(Action))) == []
+
+
+def test_a_wrong_typed_drivers_field_never_reaches_the_verifier(assessment, layers, monkeypatch):
+    """Types are the API's job now. If one slips through anyway the report is malformed,
+    not merely wrong, so it is rejected before the verifier ever sees it."""
+    verified = []
+    real = loop.verify
+    monkeypatch.setattr(loop, "verify", lambda *a, **k: verified.append(a) or real(*a, **k))
+
+    wrong_type = {**GOOD, "drivers": "m_dist_water is the main driver"}  # a string, not a list
+    client = FakeClient(call("submit_report", **wrong_type), call("submit_report", **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+
+    schema_steps = [s for s in run.steps if s.kind == "schema"]
+    assert len(schema_steps) == 1
+    assert "drivers" in schema_steps[0].detail and "valid list" in schema_steps[0].detail
+    assert len(verified) == 1  # only the well-formed retry was verified
+    assert verified[0][0] == GOOD["summary"] + "\n" + GOOD["rationale"] + "\n" + "\n".join(
+        d["why"] for d in GOOD["drivers"]) + "\n" + "\n".join(GOOD["caveats"])
+    assert run.report.explained is True  # the retry still carries the run

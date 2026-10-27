@@ -22,24 +22,50 @@ is now three parts, and each is only allowed to claim what it can support:
    *neighbourhood*, plus terrain and surface proxies. Weight 0.50. Never phrase its output
    as a verdict on an address.
 2. **Local flood history (`app/agent/history.py`).** News reports of flooding at this
-   street, estate or district in the last 5 years, found with Meta's `web_search` tool and
-   kept only when the URL appears in the API's own `url_citation` annotations and the event
-   has a parseable date. Weight 0.40, and it is a **positive signal only**: reports raise
-   the score, none found does not clear a site, because Lagos news covers some
-   neighbourhoods far better than others.
+   street, estate or district in the last 5 years, found with Meta's `web_search` tool.
+   A report is kept only if it clears three checks: the URL is one the API itself
+   retrieved (an `open_page` record or a `url_citation` annotation — never a URL the model
+   merely typed), the event date parses and sits inside the window, and the fetched page
+   actually names one of our reverse-geocoded place names. Weight 0.40, and it is a
+   **positive signal only**: reports raise the score, none found does not clear a site,
+   because Lagos news covers some neighbourhoods far better than others.
 3. **Rainfall.** Weight 0.10. A ~10 km grid, so it separates years, not addresses.
+
+Three rules that fall out of this, all enforced in code:
+- **Area-level news reports score zero.** 27 of 30 random Lagos addresses turn up one, so
+  they carry no information about an address. They are still listed as context.
+- **A report is street-level only if the article names the street our reverse geocode gave
+  us.** The model's own `match_level` is corrected against the fetched page, up or down.
+- **Where no street-level report was found, the report must say so**, in these words: "No
+  street-level flood reports found. This does not mean the site is safe." The verifier
+  rejects any report without it.
+
+## SCORING IS FROZEN (Oct 27)
+
+The weights, ramps and match-level weights in `app/scoring.py` and `MATCH_WEIGHT` in
+`app/agent/history.py` are **not to be changed** without **new, independent validation
+sites** — sites not drawn from news reports, and including dry ones. They are reasoned
+priors, and the current set (4 flood sites, 0 dry, a 30-point contaminated baseline) cannot
+support fitting them. Tuning on it would turn the only honest test into a training set.
+
+`docs/validation.md` is the log of every run and what changed after it. Read it before
+proposing a scoring change. `test_the_three_groups_carry_their_documented_weight` pins the
+split so it cannot drift by accident. The right fix for a bad score is a better
+measurement — see the end of `docs/validation.md` for the four that would actually help.
 
 ## Core design decisions (do not undo without asking)
 
 1. **Code measures, the LLM explains.** Every number in a report comes from `app/metrics.py`. The score is a fixed formula in `app/scoring.py`. Muse Spark never invents or changes numbers or tiers.
 2. **Verifier gate.** `app/agent/verifier.py` rejects reports with numbers not in the metrics, a wrong tier, or an action the tier does not allow. Keep it strict. Dates are the one special case: a `YYYY-MM-DD` token is allowed only if some metric's label or source states it, and dates are cut from the text before the number rule runs, so `2025-06-14` can never make `6` or `14` quotable. Nothing else in a label or source is quotable — a source reading `threshold -14.0 dB` does not make `14%` a measured value.
 3. **SAM 3.1 is not used to measure site water.** A pre-build test (`docs/day0-sam-test.md`) showed it finds nothing at 2 km / 10 m and only the lagoon at 5 km. SAM is for site photos and a 5 km context map.
-4. **The web search is never taken on trust.** `history.py` keeps a report only if its URL
-   is in the API's `url_citation` annotations, so a plausible-looking link the model typed
-   is discarded along with its claim. Undated and out-of-window reports go too, and every
-   drop is recorded with its reason: "we found nothing" and "the model made something up
-   and we caught it" must never look the same. Results are cached per place in
-   `data/cache/history/`.
+4. **The web search is never taken on trust.** `history.py` checks a report against the
+   API's own retrieval record (`grounded_urls`), then against the live page, which must
+   name one of the places the reverse geocode gave us. The model's wording and its quote
+   are recorded as secondary checks and are never decisive; its `match_level` is corrected
+   against the page. A page we cannot read is "unknown" and the report is kept, because a
+   paywall is not evidence against it. Every drop is recorded with its reason: "we found
+   nothing" and "the model made something up and we caught it" must never look the same.
+   Results are cached per place in `data/cache/history/`.
 5. **The agent explains, it never measures.** `app/agent/loop.py` hands Muse Spark the metrics and the evidence PNGs and takes back one `submit_report` call. Numbers, tier and allowed actions are fixed before the model is called; `submit_report`'s action enum is the tier's allowed actions, so a disallowed action cannot even be expressed. The tool is `strict: true`, so the API enforces the field types and only content errors should reach the verifier. Every report goes through the verifier: one rejection is retried with the errors, a second returns a metrics-only report with `explained: false`. `_report_schema` must stay inside the strict subset or the call 400s; a test guards that.
 6. **Cloud is normal over Lagos.** Optical water uses Sentinel-2 SCL and only clear pixels; radar and JRC history are core inputs. Every layer is optional and the score rescales weights, lowering confidence.
 

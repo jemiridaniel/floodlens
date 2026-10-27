@@ -18,15 +18,28 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
     r500 = ring_mask(g, 500)
     out: list[Metric] = []
 
+    # History is the check on a single optical date: tall buildings cast shadows that
+    # Sentinel-2's classifier labels water (14.6% within 250 m of Lagos Island, where JRC
+    # has never seen water). None when there is no usable history to check against.
+    ever_water = None
+    if layers.jrc_occurrence is not None and bool(np.isfinite(layers.jrc_occurrence).any()):
+        ever_water = np.nan_to_num(layers.jrc_occurrence) > 0
+
     water_now = None
     if layers.optical is not None:
         o = layers.optical
         water_now = w.optical_water(o.scl, o.green, o.nir)
         clear = w.clear_mask(o.scl, w.CLOUD_BUFFER_PX)
-        share = w.share_within(water_now, r250, clear)
+        confirmed = water_now if ever_water is None else water_now & ever_water
+        share = w.share_within(confirmed, r250, clear)
         if share is not None:
-            out.append(Metric(id="m_water_now_250", label="Water within 250 m, clear dry-season image",
-                              value=100 * share, unit="%", source=f"Sentinel-2 {o.date}"))
+            if ever_water is None:
+                label = "Water within 250 m on a clear date (unconfirmed)"
+                source = f"Sentinel-2 {o.date}"
+            else:
+                label = "Water within 250 m on a clear date, confirmed by history"
+                source = f"Sentinel-2 {o.date} + JRC Global Surface Water"
+            out.append(Metric(id="m_water_now_250", label=label, value=100 * share, unit="%", source=source))
         out.append(Metric(id="m_tile_cloud", label="Cloud over the site image", value=100 * o.tile_cloud,
                           unit="%", source=f"Sentinel-2 {o.date}", decimals=0))
 

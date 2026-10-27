@@ -1,5 +1,6 @@
 import pytest
 
+from app.geo.water import SCL_WATER
 from app.metrics import compute_metrics
 from app.schemas import Metric, Tier
 from app.scoring import FEATURES, score, tier_for
@@ -71,3 +72,36 @@ def test_distance_prefers_jrc_history_over_one_image(layers):
     assert m["m_dist_water"].source == "JRC Global Surface Water"
     layers.jrc_occurrence = np.zeros_like(layers.jrc_occurrence)  # no JRC water: fall back
     assert by_id(compute_metrics(layers))["m_dist_water"].value < 60
+
+
+def test_shadow_water_with_no_history_is_not_counted(layers):
+    """Tall-building shadow beside the site: SCL calls it water, JRC never saw water there."""
+    layers.optical.scl[95:100, 95:100] = SCL_WATER  # 25 px of "water" about 50 m from the site
+    assert layers.jrc_occurrence[95:100, 95:100].max() == 0
+
+    m = by_id(compute_metrics(layers))["m_water_now_250"]
+    assert m.value == 0
+    assert m.label == "Water within 250 m on a clear date, confirmed by history"
+    assert "JRC" in m.source
+
+    layers.jrc_occurrence = None  # nothing to check against: count it, but say so
+    unconfirmed = by_id(compute_metrics(layers))["m_water_now_250"]
+    assert unconfirmed.value > 1
+    assert unconfirmed.label == "Water within 250 m on a clear date (unconfirmed)"
+
+
+def test_any_past_water_confirms_optical_water(layers):
+    """Occurrence above 0 confirms, even well below the regular-water threshold."""
+    layers.optical.scl[95:100, 95:100] = SCL_WATER
+    layers.jrc_occurrence[95:100, 95:100] = 5  # seen rarely, far under JRC_PERMANENT
+    assert by_id(compute_metrics(layers))["m_water_now_250"].value > 1
+
+
+def test_all_nodata_history_counts_as_unconfirmed(layers):
+    """A JRC window that is entirely no-data must not silently zero the metric."""
+    import numpy as np
+    layers.optical.scl[95:100, 95:100] = SCL_WATER
+    layers.jrc_occurrence = np.full_like(layers.jrc_occurrence, np.nan)
+    m = by_id(compute_metrics(layers))["m_water_now_250"]
+    assert m.value > 1
+    assert m.label.endswith("(unconfirmed)")

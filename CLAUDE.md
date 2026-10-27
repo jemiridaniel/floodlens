@@ -64,6 +64,7 @@ Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: htt
 ## Known issues (first real run, Lagos Island, Oct 27)
 
 - **Sentinel-2 water near clouds is unreliable.** In the first Lagos run, cloud shadow was labelled water 72 m from a site that JRC and radar show is 500+ m from water. Optical water now needs 100 m clearance from cloud/shadow, and distance/height use JRC history first. JRC occurrence of 0% within 500 m of Lagos Island was correct.
+- **Tall-building shadows read as water.** `m_water_now_250` reported 14.6% water within 250 m of Lagos Island, where JRC has seen no water within 500 m and the nearest regular water is 749 m away. The pixels are not near cloud, so they are building shadows that Sentinel-2's SCL labels water. The metric now counts an optical water pixel only where JRC occurrence is above 0, and says "(unconfirmed)" in its label when there is no JRC history to check against.
 - **Ground height was 7.5 m**, probably rooftops: Copernicus GLO-30 is a surface model. Now uses the 10th percentile within 100 m of the site. Re-check.
 - **Radar found 0% water**; the Otsu threshold hit the -14 dB clip. Urban flooding is hard for radar (building double-bounce). Consider a wet-minus-dry change measure.
 - The score weights in `scoring.py` are hand-set; tune them on `data/validation_sites.csv` once it has real, sourced sites.

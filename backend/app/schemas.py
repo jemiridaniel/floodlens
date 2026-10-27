@@ -58,3 +58,48 @@ class Assessment(BaseModel):
     allowed_actions: list[Action]
     evidence: dict[str, str] = {}
     notes: list[str] = []
+
+
+class Driver(BaseModel):
+    """One metric the agent says is driving the score."""
+
+    metric_id: str
+    why: str
+
+
+class Report(BaseModel):
+    """The written assessment. Produced by the agent, or by the code-only fallback."""
+
+    summary: str
+    drivers: list[Driver] = []
+    action: Action
+    rationale: str
+    caveats: list[str] = []
+    explained: bool = True  # False = the model never produced a report the verifier accepted
+
+    def text(self) -> str:
+        """Everything a reader will see, joined for the verifier to check."""
+        parts = [self.summary, self.rationale, *(d.why for d in self.drivers), *self.caveats]
+        return "\n".join(p for p in parts if p)
+
+
+class AgentStep(BaseModel):
+    """One step of the agent run, for live progress in the UI and for debugging."""
+
+    n: int
+    kind: str  # model | tool | verify
+    name: str
+    detail: str = ""  # short, already truncated: safe to show
+    ms: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class AgentRun(BaseModel):
+    report: Report
+    steps: list[AgentStep] = []
+    calls: int = 0  # model calls used, capped by MAX_MODEL_CALLS
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    errors: list[str] = []  # verifier errors that forced a retry or the fallback

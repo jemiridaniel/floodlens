@@ -2,8 +2,10 @@
 """Run a real FloodLens assessment for one site and print the metrics and score.
 
     python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --label "Lagos Island"
+    python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --explain
 
-Uses only open data (Planetary Computer, Open-Meteo); no Meta API calls yet.
+Open data only (Planetary Computer, Open-Meteo) unless --explain, which also calls
+Muse Spark through the agent and needs MODEL_API_KEY.
 """
 from __future__ import annotations
 
@@ -12,28 +14,23 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
-from app.geo.raster import stretch
+from app.agent.loop import explain
+from app.evidence import evidence_pngs
 from app.geo.sources import PlanetaryComputerSource
-from app.geo.water import clear_mask, optical_water, radar_water
+from app.geo.water import radar_water
 from app.pipeline import assess
 from app.schemas import AssessmentRequest
 from app.scoring import FEATURES
 
 
-def save_evidence(layers, out: Path) -> None:
+def save_evidence(layers, out: Path) -> dict[str, bytes]:
+    """Write the same PNGs the agent looks at through view_evidence."""
     out.mkdir(parents=True, exist_ok=True)
-    if layers.optical:
-        o = layers.optical
-        clear = clear_mask(o.scl)
-        rgb = np.dstack([stretch(b, 1, 99, clear) for b in (o.red, o.green, o.blue)])
-        Image.fromarray(rgb).resize((800, 800), Image.NEAREST).save(out / "optical.png")
-        Image.fromarray((optical_water(o.scl, o.green, o.nir) * 255).astype(np.uint8)).resize(
-            (800, 800), Image.NEAREST).save(out / "water_now.png")
-    if layers.radar:
-        mask, _ = radar_water(layers.radar.vv)
-        Image.fromarray((mask * 255).astype(np.uint8)).resize((800, 800), Image.NEAREST).save(out / "water_wet.png")
+    pngs = evidence_pngs(layers)
+    for name, png in pngs.items():
+        (out / f"{name}.png").write_bytes(png)
+    return pngs
 
 
 def _stats(name: str, a: np.ndarray | None) -> None:
@@ -49,7 +46,7 @@ def _stats(name: str, a: np.ndarray | None) -> None:
           f"p1/p10/p50/p90/p99 = {' / '.join(f'{v:.2f}' for v in p)}")
 
 
-def debug_report(layers, out: Path) -> None:
+def debug_report(layers) -> None:
     print("\n  DEBUG: raw layers")
     print(f"    item ids: {layers.item_ids}")
     if layers.optical:
@@ -64,12 +61,34 @@ def debug_report(layers, out: Path) -> None:
         _stats("radar_vv_db", np.where(vv > 0, to_db(vv), np.nan))
         _, t = radar_water(vv)
         print(f"    radar {layers.radar.item_id}  Otsu threshold after clipping: {t:.1f} dB")
-    if layers.jrc_occurrence is not None:
-        occ = np.nan_to_num(layers.jrc_occurrence)
-        Image.fromarray((np.clip(occ, 0, 100) * 2.55).astype(np.uint8)).resize(
-            (800, 800), Image.NEAREST).save(out / "jrc_occurrence.png")
     for note in layers.notes:
         print(f"    note: {note}")
+
+
+def print_run(run) -> None:
+    r = run.report
+    print("\n  AGENT STEPS")
+    for s in run.steps:
+        tok = f"{s.input_tokens:>6d} in {s.output_tokens:>5d} out" if s.input_tokens or s.output_tokens else " " * 19
+        print(f"    {s.n:>2d} {s.kind:<6s} {s.name:<22s} {s.ms:>6d} ms  {tok}  {s.detail}")
+    print(f"\n  {len(run.steps)} steps, {run.calls} model calls, "
+          f"{run.input_tokens} in + {run.output_tokens} out tokens, est ${run.cost_usd:.4f}")
+    if run.errors:
+        print("  verifier errors:")
+        for e in run.errors:
+            print(f"    - {e}")
+
+    print(f"\n  REPORT  (explained: {str(r.explained).lower()})")
+    print(f"\n  {r.summary}")
+    print("\n  Drivers:")
+    for d in r.drivers:
+        print(f"    {d.metric_id:24s} {d.why}")
+    print(f"\n  Action: {r.action.value}")
+    print(f"  Rationale: {r.rationale}")
+    if r.caveats:
+        print("  Caveats:")
+        for c in r.caveats:
+            print(f"    - {c}")
 
 
 def main() -> None:
@@ -79,6 +98,8 @@ def main() -> None:
     ap.add_argument("--label")
     ap.add_argument("--out", type=Path, default=Path("out/assess"))
     ap.add_argument("--debug", action="store_true", help="print raw layer statistics")
+    ap.add_argument("--explain", action="store_true",
+                    help="have Muse Spark explain the score (calls the Meta API, needs MODEL_API_KEY)")
     args = ap.parse_args()
 
     source = PlanetaryComputerSource()
@@ -93,7 +114,7 @@ def main() -> None:
     result = assess(AssessmentRequest(lat=args.lat, lon=args.lon, label=args.label), Keep())
     save_evidence(Keep.layers, args.out)
     if args.debug:
-        debug_report(Keep.layers, args.out)
+        debug_report(Keep.layers)
 
     print(f"\n{args.label or ''} ({args.lat}, {args.lon})")
     for m in result.metrics:
@@ -108,6 +129,12 @@ def main() -> None:
     for note in result.notes:
         print(f"  note: {note}")
     (args.out / "assessment.json").write_text(result.model_dump_json(indent=2))
+
+    if args.explain:
+        run = explain(result, Keep.layers)
+        print_run(run)
+        (args.out / "report.json").write_text(run.model_dump_json(indent=2))
+
     print(f"\n  Evidence images and assessment.json in {args.out.resolve()}")
     print(json.dumps({"tier": result.score.tier.value, "score": result.score.score}))
 

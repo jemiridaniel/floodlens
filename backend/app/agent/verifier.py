@@ -24,7 +24,7 @@ class Verdict:
     errors: list[str] = field(default_factory=list)
 
 
-def _numbers(text: str) -> list[float]:
+def numbers(text: str) -> list[float]:
     out = []
     for tok in NUMBER.findall(text):
         try:
@@ -47,7 +47,7 @@ def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Scor
     errors: list[str] = []
     allowed = [(m.value, m.decimals) for m in metrics] + [(score.score, 1)]
     ok_set = ALWAYS_OK | (extra_allowed or set())
-    for x in _numbers(text):
+    for x in numbers(text):
         if x in ok_set or (1900 <= x <= 2100 and x.is_integer()):
             continue
         if not _matches(x, allowed):

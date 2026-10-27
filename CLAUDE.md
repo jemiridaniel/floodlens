@@ -16,7 +16,8 @@ Flood-risk checks on loan collateral for Nigerian microfinance lenders. Entry fo
 1. **Code measures, the LLM explains.** Every number in a report comes from `app/metrics.py`. The score is a fixed formula in `app/scoring.py`. Muse Spark never invents or changes numbers or tiers.
 2. **Verifier gate.** `app/agent/verifier.py` rejects reports with numbers not in the metrics, a wrong tier, or an action the tier does not allow. Keep it strict.
 3. **SAM 3.1 is not used to measure site water.** A pre-build test (`docs/day0-sam-test.md`) showed it finds nothing at 2 km / 10 m and only the lagoon at 5 km. SAM is for site photos and a 5 km context map.
-4. **Cloud is normal over Lagos.** Optical water uses Sentinel-2 SCL and only clear pixels; radar and JRC history are core inputs. Every layer is optional and the score rescales weights, lowering confidence.
+4. **The agent explains, it never measures.** `app/agent/loop.py` hands Muse Spark the metrics and the evidence PNGs and takes back one `submit_report` call. Numbers, tier and allowed actions are fixed before the model is called; `submit_report`'s action enum is the tier's allowed actions, so a disallowed action cannot even be expressed. Every report goes through the verifier: one rejection is retried with the errors, a second returns a metrics-only report with `explained: false`.
+5. **Cloud is normal over Lagos.** Optical water uses Sentinel-2 SCL and only clear pixels; radar and JRC history are core inputs. Every layer is optional and the score rescales weights, lowering confidence.
 
 ## Layout
 
@@ -30,11 +31,13 @@ backend/app/
   geo/water.py     pure numpy: NDWI, SCL, radar Otsu, distance, ground height
   metrics.py       SiteLayers -> list[Metric]
   scoring.py       FEATURES, tiers, ALLOWED_ACTIONS
+  evidence.py      SiteLayers -> the named PNGs (optical, water_now, water_history, water_wet)
   agent/verifier.py
+  agent/loop.py    Muse Spark: get_metrics / view_evidence / submit_report, verify, retry, fallback
   sam/client.py    SAM 3.1 segment() + mask union
   pipeline.py      fetch -> measure -> score
   main.py          FastAPI
-backend/scripts/   assess_site.py (real run, --debug), sam_photos.py
+backend/scripts/   assess_site.py (real run, --debug, --explain), sam_photos.py
 backend/tests/     offline, synthetic layers in conftest.py
 ```
 
@@ -43,7 +46,7 @@ backend/tests/     offline, synthetic layers in conftest.py
 ```bash
 pip install -e ".[dev]"
 pytest -q && ruff check .
-python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --label "Lagos Island" --debug
+python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --label "Lagos Island" --debug --explain
 uvicorn app.main:app --reload
 ```
 
@@ -72,7 +75,7 @@ Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: htt
 ## Next steps
 
 1. Fix the issues above using `--debug` output.
-2. Muse Spark agent loop (`app/agent/loop.py`): Responses API with tool calling over the existing functions, structured JSON report, verifier, one retry with the verifier's errors, then fall back to metrics only.
+2. ~~Muse Spark agent loop~~ built: `app/agent/loop.py`, Responses API, 3 tools, verifier with one retry then a metrics-only fallback. Still to do: stream the steps over SSE, add `segment_photo`, and replace the estimated token prices in `loop.py` with the real ones.
 3. SAM 3.1 on site photos (`scripts/sam_photos.py` first, then a `segment_photo` tool).
 4. Next.js web app from the design (new assessment, agent at work with live steps over SSE, report, portfolio).
 5. Portfolio mode with the Baseten screener; validation sites; demo video.

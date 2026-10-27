@@ -9,6 +9,19 @@ from rasterio.windows import from_bounds
 
 from .aoi import Grid, Site, bbox
 
+# GDAL has no request timeout by default, so a stalled read of a remote COG blocks
+# forever. That is worse than a failure: sources.try_twice only retries exceptions, and a
+# hang never raises one, so one bad socket stops a whole validation run. (It did: a 30-site
+# baseline sat for 25 minutes on one Azure blob connection at 0% CPU.) With these set, a
+# stall becomes an exception, the retry gets its chance, and a layer that really is gone
+# ends up a named missing group at low confidence.
+GDAL_HTTP_OPTIONS = {
+    "GDAL_HTTP_TIMEOUT": "30",         # seconds for the whole request
+    "GDAL_HTTP_CONNECTTIMEOUT": "10",
+    "GDAL_HTTP_MAX_RETRY": "2",
+    "GDAL_HTTP_RETRY_DELAY": "1",
+}
+
 
 def read_window(
     href: str,
@@ -22,7 +35,7 @@ def read_window(
     Pixels outside the source are 0. The result is float32.
     """
     box = bbox(site, grid.size_m)
-    with rasterio.open(href) as src:
+    with rasterio.Env(**GDAL_HTTP_OPTIONS), rasterio.open(href) as src:
         tf = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
         x0, y0 = tf.transform(box[0], box[1])
         x1, y1 = tf.transform(box[2], box[3])

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from app.agent.history import lookup as flood_history_lookup
 from app.geo.aoi import Grid, Site, ring_mask
 from app.geo.sources import PlanetaryComputerSource, _catalog, landcover
 from app.geo.water import share_within
@@ -36,6 +37,7 @@ BUILT_UP_MIN = 0.50
 WORLDCOVER_BUILT_UP, WORLDCOVER_WATER = 50, 80
 SCORED = [f.metric_id for f in FEATURES]  # the five metrics the score is built from
 HEADS = {
+    "m_reported_floods": "reports",
     "m_local_low_spot": "lowspot",
     "m_built_up_500": "built%",
     "m_wetland_500": "wetlnd%",
@@ -45,6 +47,9 @@ HEADS = {
     "m_height_above_water": "height",
     "m_max_daily_rain": "rain",
 }
+
+
+HISTORY: dict[str, object] = {}  # site_id -> FloodHistory, for the cost and circularity report
 
 
 @dataclass
@@ -66,13 +71,19 @@ def read_sites(path: Path) -> list[dict[str, str]]:
         return [r for r in csv.DictReader(f) if r.get("site_id")]
 
 
-def run_site(site: dict[str, str]) -> Row:
+def run_site(site: dict[str, str], history: bool = False) -> Row:
     row = Row(site_id=site["site_id"], label=site["label"], expected=site["expected"],
               quality=site.get("geocode_quality") or "ok")
     req = AssessmentRequest(lat=float(site["lat"]), lon=float(site["lon"]), label=site["label"],
                             wet_date=site.get("wet_date") or None)
+
+    def remember(s: Site):
+        got = flood_history_lookup(s)
+        HISTORY[site["site_id"]] = got
+        return got
+
     try:
-        result = assess(req, PlanetaryComputerSource())
+        result = assess(req, PlanetaryComputerSource(), flood_history=remember if history else None)
     except Exception as exc:  # one bad site must not lose the whole run
         row.error = f"{exc.__class__.__name__}: {exc}"
         return row
@@ -171,6 +182,42 @@ def write_csv(path: Path, rows: list[Row]) -> None:
                         r.missing, r.error])
 
 
+def print_history(rows: list[Row], base: list[Row]) -> None:
+    """The circularity check. The flood sites were *chosen* from news reports, so finding
+    reports for them proves nothing. The informative number is how often a random address
+    also turns up a street-level report."""
+    runs = [(r, HISTORY[r.site_id]) for r in rows + base if r.site_id in HISTORY]
+    if not runs:
+        return
+    searches = sum(h.searches for _, h in runs)
+    cached = sum(1 for _, h in runs if h.from_cache)
+    cost = sum(h.cost_usd for _, h in runs if not h.from_cache)
+    print(f"\n  LOCAL FLOOD HISTORY  {len(runs)} places, {cached} served from cache, "
+          f"{searches} searches, est ${cost:.4f}")
+
+    dropped = sum(len(h.dropped) for _, h in runs)
+    print(f"    {sum(len(h.reports) for _, h in runs)} reports kept, {dropped} dropped "
+          "(uncited url, unparseable date, or outside the window)")
+    for _, h in runs:
+        for d in h.dropped[:2]:
+            print(f"      dropped: {d[:110]}")
+
+    def street_level(h) -> bool:
+        return any(r.match_level.value == "street" for r in h.reports)
+
+    for name, group in (("flood sites", [h for r, h in runs if r.expected == "flood"]),
+                        ("random baseline", [h for r, h in runs if r.expected == "baseline"])):
+        if not group:
+            continue
+        any_level = sum(1 for h in group if h.reports)
+        street = sum(1 for h in group if street_level(h))
+        print(f"\n    {name}: {any_level}/{len(group)} have any report, "
+              f"{street}/{len(group)} have a STREET-level report")
+    print("\n    The flood sites came from news, so their reports are circular by "
+          "construction.")
+    print("    Only the baseline street-level rate says whether this signal is selective.")
+
+
 def print_table(rows: list[Row]) -> None:
     head = f"  {'site':<30s} {'exp':<6s} {'score':>6s} {'tier':<9s}"
     head += "".join(f"{HEADS[m]:>8s}" for m in SCORED)
@@ -209,6 +256,8 @@ def main() -> None:
     ap.add_argument("--baseline", type=int, nargs="?", const=30, default=0, metavar="N",
                     help="also score N random built-up points in Lagos (default 30, fixed seed)")
     ap.add_argument("--baseline-out", type=Path, default=Path("out/baseline.csv"))
+    ap.add_argument("--history", action="store_true",
+                    help="also look up local flood history from news (Meta web search, costs money)")
     args = ap.parse_args()
 
     sites = read_sites(args.sites)
@@ -217,7 +266,7 @@ def main() -> None:
     rows = []
     for i, site in enumerate(sites, 1):
         print(f"  [{i}/{len(sites)}] {site['label']} ...", flush=True)
-        rows.append(run_site(site))
+        rows.append(run_site(site, args.history))
 
     print_table(rows)
 
@@ -229,9 +278,12 @@ def main() -> None:
             print(f"  [baseline {i}/{len(points)}] {lat:.4f},{lon:.4f} ...", flush=True)
             base.append(run_site({"site_id": f"bg{i:03d}", "label": f"{lat:.4f},{lon:.4f}",
                                   "expected": "baseline", "lat": str(lat), "lon": str(lon),
-                                  "wet_date": ""}))
+                                  "wet_date": ""}, args.history))
         write_csv(args.baseline_out, base)
         print_baseline([r for r in rows if r.expected == "flood" and r.quality != "approximate"], base)
+
+    if args.history:
+        print_history(rows, base)
 
     write_csv(args.out, rows)
     print(f"\n  Saved {args.out.resolve()}"

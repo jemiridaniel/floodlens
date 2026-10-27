@@ -4,32 +4,43 @@ Each feature is mapped to 0-1 risk by a simple ramp, weighted, and summed to 0-1
 Missing features are dropped and the remaining weights rescaled; confidence falls
 with the share of weight that was missing.
 
-The weights below are REASONED PRIORS, not fitted values. Nothing here is tuned to the
-validation set: four sites cannot support fitting eight weights, and tuning on them would
-turn the one honest test we have into a training set. They encode one finding and one
-piece of physical reasoning.
+The weights below are REASONED PRIORS, not fitted values, and they are weighted by what
+each group is actually known to measure.
 
-The finding: the first validation run scored four flood-verified Lagos sites at 0.0, 1.2,
-2.1 and 30.9 out of 100. Every feature then in the formula measured proximity to a body
-of water, so the formula could only see riverine and coastal flooding. Three of the four
-sites have no water at all within 2 km; they flood because rain cannot drain away. That is
-pluvial flooding, and it was worth 0 weight.
+What we learned the hard way. The satellite features alone put four flood-verified Lagos
+sites at the 43rd to 70th percentile of 30 random built-up points in the same city: AUC
+0.578, no better than chance. Nothing in the imagery separates a street that floods from
+one that does not, because in Lagos the difference is drainage, and drainage is not
+visible from orbit. So the satellite half no longer claims to grade a street. It is an
+AREA SCREEN for coastal and riverine exposure, which is the thing it can honestly see.
 
-The reasoning behind the split:
-- Pluvial 0.45. Rain floods a site when the water has somewhere to collect (a local dip,
-  m_local_low_spot, the strongest single signal at 0.20) and nowhere to soak away
-  (impervious ground, m_built_up_500, 0.15). Wetland or mangrove within 500 m,
-  m_wetland_500 at 0.10, marks ground that was drained or reclaimed and still sits low.
-- Riverine and coastal 0.45, the same share, split across the four water-body features.
-  This is the better-measured half -- 37 years of JRC history is stronger evidence than a
-  land-cover proxy -- but it describes a kind of flooding that most inland Lagos
-  collateral is not exposed to, so it does not deserve a larger share.
-- Rainfall 0.10. The trigger for both, but weakly site-specific: one storm covers the
-  whole city, so it separates years, not addresses.
+The three groups:
 
-Re-check all of this against data/validation_sites.csv (scripts/validate.py) once the set
-has dry sites and hand-placed pins. Until then these are priors, and the right fix for a
-bad score is a better measurement, not a bigger weight.
+1. LOCAL HISTORY, 0.40. m_reported_floods, from news reports of flooding at this street,
+   estate or district, each one verified against the search engine's own citations. This
+   is the only direct evidence we have about a specific address, so it carries the most
+   weight. It is deliberately a POSITIVE signal only: reports found raise the score, but
+   none found does not vouch for a site, because Lagos news covers some neighbourhoods far
+   better than others. A site with no reports scores 0 here and leans on the area screen.
+   Note the circularity risk when reading validation: sites chosen from news will be found
+   in news. The honest test is how often a RANDOM address also turns up street-level
+   reports.
+
+2. AREA SCREEN, 0.50, what open satellite data can honestly say about a neighbourhood:
+   - Coastal and riverine exposure, 0.25. Water that arrives from a body of water. The
+     best-measured thing here (37 years of JRC history), and the one FloodLens should be
+     trusted on.
+   - Terrain and surface, 0.25. A local dip collects rain (m_local_low_spot) and sealed
+     ground stops it soaking away (m_built_up_500); wetland within 500 m marks drained or
+     reclaimed low ground. Plausible pluvial proxies that the baseline showed do not
+     discriminate between addresses on their own, so they screen an area and no more.
+
+3. RAINFALL, 0.10. The trigger for both, but Open-Meteo is a ~10 km grid: one storm hands
+   the whole city nearly the same number (50-79 mm across the baseline). It separates
+   years, not addresses, and is weighted accordingly.
+
+The right fix for a bad score is a better measurement, not a bigger weight. Re-check with
+scripts/validate.py --baseline once data/validation_sites.csv has dry sites and real pins.
 """
 from __future__ import annotations
 
@@ -52,21 +63,30 @@ class Feature:
 
 
 FEATURES: tuple[Feature, ...] = (
-    # Pluvial: rain with somewhere to collect and nowhere to drain. 0.45 total.
-    # A 3 m dip is a serious sink; 20-90% built-up spans "some open ground left" to
-    # "effectively sealed"; any wetland in a 500 m urban ring is already a signal, so
-    # 20% is treated as full risk.
-    Feature("m_local_low_spot", 0.20, zero_at=0, full_at=-3),
-    Feature("m_built_up_500", 0.15, zero_at=20, full_at=90),
-    Feature("m_wetland_500", 0.10, zero_at=0, full_at=20),
-    # Riverine and coastal: water arriving from a body of water. 0.45 total.
-    Feature("m_water_history_500", 0.15, zero_at=0, full_at=30),
-    Feature("m_wet_water_250", 0.10, zero_at=0, full_at=30),
-    Feature("m_dist_water", 0.10, zero_at=1500, full_at=100),
-    Feature("m_height_above_water", 0.10, zero_at=10, full_at=0.5),
-    # The trigger for both, but it rains on the whole city at once. 0.10.
+    # 1. Local history, 0.40. Weighted events: 1.0 street, 0.6 estate, 0.3 area. Three
+    # street-level floods in five years is a street that floods most rainy seasons.
+    Feature("m_reported_floods", 0.40, zero_at=0, full_at=3),
+    # 2a. Area screen, coastal and riverine exposure, 0.25.
+    Feature("m_water_history_500", 0.10, zero_at=0, full_at=30),
+    Feature("m_wet_water_250", 0.05, zero_at=0, full_at=30),
+    Feature("m_dist_water", 0.05, zero_at=1500, full_at=100),
+    Feature("m_height_above_water", 0.05, zero_at=10, full_at=0.5),
+    # 2b. Area screen, terrain and surface, 0.25. A 3 m dip is a serious sink; 20-90%
+    # built-up spans "open ground left" to "sealed"; any wetland in a 500 m urban ring
+    # is already a signal, so 20% is full risk.
+    Feature("m_local_low_spot", 0.12, zero_at=0, full_at=-3),
+    Feature("m_built_up_500", 0.08, zero_at=20, full_at=90),
+    Feature("m_wetland_500", 0.05, zero_at=0, full_at=20),
+    # 3. Rainfall, 0.10.
     Feature("m_max_daily_rain", 0.10, zero_at=60, full_at=200),
 )
+
+GROUPS: dict[str, tuple[str, ...]] = {
+    "local history": ("m_reported_floods",),
+    "area screen": ("m_water_history_500", "m_wet_water_250", "m_dist_water", "m_height_above_water",
+                    "m_local_low_spot", "m_built_up_500", "m_wetland_500"),
+    "rainfall": ("m_max_daily_rain",),
+}
 
 TIER_CUTS = ((75, Tier.severe), (50, Tier.high), (25, Tier.moderate), (0, Tier.low))
 

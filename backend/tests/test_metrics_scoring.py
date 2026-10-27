@@ -35,8 +35,10 @@ def test_missing_layers_lower_confidence_not_crash(layers):
     layers.radar = None
     layers.dem = None  # takes height above water and the low spot with it
     s = score(compute_metrics(layers))
-    assert set(s.missing) == {"m_wet_water_250", "m_height_above_water", "m_local_low_spot"}
-    assert s.confidence == "medium"  # 0.40 of the weight gone
+    # m_reported_floods is never produced offline: it needs the web search
+    assert set(s.missing) == {"m_wet_water_250", "m_height_above_water", "m_local_low_spot",
+                              "m_reported_floods"}
+    assert s.confidence == "low"  # 0.62 of the weight gone
     assert 0 <= s.score <= 100
 
 
@@ -132,7 +134,8 @@ def test_no_water_in_view_is_a_measurement_not_a_gap(layers):
     assert "m_height_above_water" not in m
     # the weight stays on the formula instead of being rescaled away
     s = score(compute_metrics(layers))
-    assert "m_dist_water" not in s.missing and s.missing == ["m_height_above_water"]
+    assert "m_dist_water" not in s.missing
+    assert set(s.missing) == {"m_height_above_water", "m_reported_floods"}
 
 
 def test_dist_water_is_dropped_only_when_nothing_could_see_water(layers):
@@ -201,7 +204,8 @@ def test_landcover_metrics_are_dropped_without_the_layer(layers):
     layers.landcover = None
     m = by_id(compute_metrics(layers))
     assert "m_built_up_500" not in m and "m_wetland_500" not in m
-    assert set(score(compute_metrics(layers)).missing) == {"m_built_up_500", "m_wetland_500"}
+    assert set(score(compute_metrics(layers)).missing) == {"m_built_up_500", "m_wetland_500",
+                                                           "m_reported_floods"}
 
 
 def test_pluvial_site_with_no_water_nearby_still_scores(layers):
@@ -219,11 +223,10 @@ def test_pluvial_site_with_no_water_nearby_still_scores(layers):
     assert s.tier in (Tier.moderate, Tier.high)
 
 
-def test_pluvial_and_riverine_carry_equal_weight():
-    """The rebalance is a design decision, not an accident of editing."""
-    pluvial = {"m_local_low_spot", "m_built_up_500", "m_wetland_500"}
-    riverine = {"m_water_history_500", "m_wet_water_250", "m_dist_water", "m_height_above_water"}
+def test_the_three_groups_carry_their_documented_weight():
+    """The split is a design decision, not an accident of editing."""
+    from app.scoring import GROUPS
     weight = {f.metric_id: f.weight for f in FEATURES}
-    assert sum(weight[m] for m in pluvial) == pytest.approx(0.45)
-    assert sum(weight[m] for m in riverine) == pytest.approx(0.45)
-    assert weight["m_max_daily_rain"] == pytest.approx(0.10)
+    assert {g: round(sum(weight[m] for m in ids), 2) for g, ids in GROUPS.items()} == {
+        "local history": 0.40, "area screen": 0.50, "rainfall": 0.10}
+    assert set(weight) == {m for ids in GROUPS.values() for m in ids}  # every feature in a group

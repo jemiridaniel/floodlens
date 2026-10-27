@@ -112,3 +112,34 @@ class AgentRun(BaseModel):
     reasoning_tokens: int = 0
     cost_usd: float = 0.0
     errors: list[str] = []  # verifier errors that forced a retry or the fallback
+
+
+class MatchLevel(StrEnum):
+    street = "street"
+    estate = "estate"
+    area = "area"
+
+
+class FloodReport(BaseModel):
+    """One news report of flooding at or near the site, verified against the search citations."""
+
+    place_named: str
+    match_level: MatchLevel
+    event_date: str  # YYYY-MM-DD or YYYY-MM, normalised
+    publisher: str
+    url: str
+    quote: str  # 30 words or fewer
+
+
+class FloodHistory(BaseModel):
+    """What the web search found for one place, and what it refused to keep."""
+
+    place: str
+    reports: list[FloodReport] = []
+    dropped: list[str] = []  # one line per rejected item, saying why
+    searches: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    from_cache: bool = False
+    searched: bool = False  # False means we never got an answer, not that there were no floods

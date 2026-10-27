@@ -12,7 +12,7 @@ from .scoring import ALLOWED_ACTIONS, score
 
 def assess(req: AssessmentRequest, source: LayerSource) -> Assessment:
     site = Site(req.lat, req.lon)
-    layers = source.fetch(site)
+    layers = source.fetch(site, req.wet_date)
     metrics = compute_metrics(layers)
     s = score(metrics)
     evidence = dict(layers.item_ids)

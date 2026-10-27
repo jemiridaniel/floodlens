@@ -37,7 +37,8 @@ backend/app/
   sam/client.py    SAM 3.1 segment() + mask union
   pipeline.py      fetch -> measure -> score
   main.py          FastAPI
-backend/scripts/   assess_site.py (real run, --debug, --explain), sam_photos.py
+backend/scripts/   assess_site.py (real run, --debug, --explain), validate.py, sam_photos.py
+data/              validation_sites.csv (flood/dry ground truth, one wet_date per flood site)
 backend/tests/     offline, synthetic layers in conftest.py
 ```
 
@@ -47,6 +48,7 @@ backend/tests/     offline, synthetic layers in conftest.py
 pip install -e ".[dev]"
 pytest -q && ruff check .
 python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --label "Lagos Island" --debug --explain
+python scripts/validate.py          # every validation site, open data only, free
 uvicorn app.main:app --reload
 ```
 
@@ -79,12 +81,14 @@ Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: htt
 - **Tall-building shadows read as water.** `m_water_now_250` reported 14.6% water within 250 m of Lagos Island, where JRC has seen no water within 500 m and the nearest regular water is 749 m away. The pixels are not near cloud, so they are building shadows that Sentinel-2's SCL labels water. The metric now counts an optical water pixel only where JRC occurrence is above 0, and says "(unconfirmed)" in its label when there is no JRC history to check against.
 - **Ground height was 7.5 m**, probably rooftops: Copernicus GLO-30 is a surface model. Now uses the 10th percentile within 100 m of the site. Re-check.
 - **Radar found 0% water**; the Otsu threshold hit the -14 dB clip. Urban flooding is hard for radar (building double-bounce). Consider a wet-minus-dry change measure.
-- The score weights in `scoring.py` are hand-set; tune them on `data/validation_sites.csv` once it has real, sourced sites.
+- The score weights in `scoring.py` are hand-set; tune them with `scripts/validate.py` on `data/validation_sites.csv`. The flood sites are in and sourced; **the two dry sites are still missing**, so there is nothing to separate against yet.
+- **Two validation pins are weak.** `isashi_light_estate` is the rounded OSM village node (the street and Light Estate are not in OSM) and `lekki_phase_1` is a neighbourhood centroid wider than the 2 km grid. Both need a hand-placed pin before any weight tuning.
 
 ## Next steps
 
 1. Fix the issues above using `--debug` output.
 2. ~~Muse Spark agent loop~~ built: `app/agent/loop.py`, Responses API, 3 tools, verifier with one retry then a metrics-only fallback. Still to do: stream the steps over SSE and add `segment_photo`.
 3. SAM 3.1 on site photos (`scripts/sam_photos.py` first, then a `segment_photo` tool).
-4. Next.js web app from the design (new assessment, agent at work with live steps over SSE, report, portfolio).
-5. Portfolio mode with the Baseten screener; validation sites; demo video.
+4. Replace the weak validation pins, add the dry sites, then tune the weights on the table from `scripts/validate.py`.
+5. Next.js web app from the design (new assessment, agent at work with live steps over SSE, report, portfolio).
+6. Portfolio mode with the Baseten screener; demo video.

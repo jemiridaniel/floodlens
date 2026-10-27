@@ -38,8 +38,10 @@ def make_layers(water_rows: int = 70, flooded_rows: int = 30, site_height: float
 class FakeSource:
     def __init__(self, layers: SiteLayers):
         self.layers = layers
+        self.asked: list[tuple[Site, str | None]] = []
 
-    def fetch(self, site: Site) -> SiteLayers:
+    def fetch(self, site: Site, wet_date: str | None = None) -> SiteLayers:
+        self.asked.append((site, wet_date))
         return self.layers
 
 

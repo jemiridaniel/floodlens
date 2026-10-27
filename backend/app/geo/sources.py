@@ -51,7 +51,7 @@ class SiteLayers:
 
 
 class LayerSource(Protocol):
-    def fetch(self, site: Site) -> SiteLayers: ...
+    def fetch(self, site: Site, wet_date: str | None = None) -> SiteLayers: ...
 
 
 def _catalog():
@@ -102,7 +102,10 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
     )
 
 
-def radar_near(catalog, site: Site, day: str, window_days: int = 6) -> Radar | None:
+RADAR_WINDOW_DAYS = 6  # Sentinel-1 revisit over Lagos, so a given date is reachable
+
+
+def radar_near(catalog, site: Site, day: str, window_days: int = RADAR_WINDOW_DAYS) -> Radar | None:
     """First Sentinel-1 RTC scene on or after `day` (within window_days)."""
     d0 = dt.date.fromisoformat(day)
     dates = f"{d0.isoformat()}/{(d0 + dt.timedelta(days=window_days)).isoformat()}"
@@ -176,7 +179,7 @@ class PlanetaryComputerSource:
         self.optical_dates = optical_dates
         self.rain_years = rain_years
 
-    def fetch(self, site: Site) -> SiteLayers:
+    def fetch(self, site: Site, wet_date: str | None = None) -> SiteLayers:
         layers = SiteLayers(site=site, grid=GRID)
         catalog = _catalog()
         today = dt.date.today()
@@ -203,11 +206,15 @@ class PlanetaryComputerSource:
         except Exception as exc:
             layers.notes.append(f"rainfall unavailable: {exc.__class__.__name__}")
 
-        for day, _ in wettest_days(layers.daily_rain_mm):
+        # A date the site is known to have flooded beats inferring one from rainfall:
+        # heavy rain somewhere in the grid is not the same as water at the site.
+        for day, _ in [(wet_date, None)] if wet_date else wettest_days(layers.daily_rain_mm):
             try:
                 layers.radar = radar_near(catalog, site, day)
             except Exception as exc:
                 layers.notes.append(f"radar unavailable: {exc.__class__.__name__}")
             if layers.radar:
                 break
+        if wet_date and layers.radar is None:
+            layers.notes.append(f"no Sentinel-1 scene within {RADAR_WINDOW_DAYS} days of {wet_date}")
         return layers

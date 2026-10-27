@@ -46,6 +46,9 @@ class AssessmentRequest(BaseModel):
     lon: float = Field(ge=-180, le=180)
     label: str | None = None
     note: str | None = None
+    # A date this site is known to have flooded. Given, the radar layer comes from the
+    # first Sentinel-1 scene on or after it instead of being guessed from rainfall.
+    wet_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class Assessment(BaseModel):

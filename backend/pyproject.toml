@@ -32,6 +32,7 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore:Use `@` matmul:PendingDeprecationWarning"]
 
 [tool.ruff]
 line-length = 120

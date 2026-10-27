@@ -78,3 +78,12 @@ def test_sam_union_mask_places_crops_at_boxes(monkeypatch):
     assert n == 1 and canvas.sum() == 4 and canvas[4, 5] and canvas[5, 7] and not canvas[4, 7]
     records[0].left = records[0].top = 9  # clipped at the edge
     assert sam.union_mask(records, (10, 10))[0].sum() == 1
+
+
+def test_covering_item_picks_tile_containing_site():
+    from app.geo.sources import covering_item
+    R = types.SimpleNamespace
+    near = R(id="neighbour", bbox=[10, 0, 20, 10])
+    home = R(id="home", bbox=[0, 0, 10, 10])
+    assert covering_item([near, home], Site(6.45, 3.39)).id == "home"
+    assert covering_item([], Site(6.45, 3.39)) is None

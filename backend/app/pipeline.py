@@ -15,7 +15,7 @@ def assess(req: AssessmentRequest, source: LayerSource) -> Assessment:
     layers = source.fetch(site)
     metrics = compute_metrics(layers)
     s = score(metrics)
-    evidence = {}
+    evidence = dict(layers.item_ids)
     if layers.optical:
         evidence["optical"] = layers.optical.item_id
     if layers.radar:

@@ -46,6 +46,7 @@ class SiteLayers:
     jrc_occurrence: np.ndarray | None = None  # 0-100 % of years with water, NaN = no data
     dem: np.ndarray | None = None  # metres
     daily_rain_mm: list[tuple[str, float]] = field(default_factory=list)
+    item_ids: dict[str, str] = field(default_factory=dict)  # layer -> STAC item id, for evidence
     notes: list[str] = field(default_factory=list)
 
 
@@ -113,20 +114,29 @@ def radar_near(catalog, site: Site, day: str, window_days: int = 6) -> Radar | N
                  vv=read_window(item.assets["vv"].href, site, GRID))
 
 
-def jrc_occurrence(catalog, site: Site) -> np.ndarray | None:
-    items = _search(catalog, "jrc-gsw", site)
-    if not items:
+def covering_item(items, site: Site):
+    """The tiled item whose footprint contains the site (search can also return neighbours)."""
+    for item in items:
+        b = item.bbox
+        if b and b[0] <= site.lon <= b[2] and b[1] <= site.lat <= b[3]:
+            return item
+    return items[0] if items else None
+
+
+def jrc_occurrence(catalog, site: Site) -> tuple[np.ndarray, str] | None:
+    item = covering_item(_search(catalog, "jrc-gsw", site), site)
+    if item is None:
         return None
-    occ = read_window(items[0].assets["occurrence"].href, site, GRID, Resampling.nearest)
+    occ = read_window(item.assets["occurrence"].href, site, GRID, Resampling.nearest)
     occ[occ > 100] = np.nan  # 255 = no data
-    return occ
+    return occ, item.id
 
 
-def dem(catalog, site: Site) -> np.ndarray | None:
-    items = _search(catalog, "cop-dem-glo-30", site)
-    if not items:
+def dem(catalog, site: Site) -> tuple[np.ndarray, str] | None:
+    item = covering_item(_search(catalog, "cop-dem-glo-30", site), site)
+    if item is None:
         return None
-    return read_window(items[0].assets["data"].href, site, GRID)
+    return read_window(item.assets["data"].href, site, GRID), item.id
 
 
 def daily_rain(site: Site, start: str, end: str, client: httpx.Client | None = None) -> list[tuple[str, float]]:
@@ -172,15 +182,19 @@ class PlanetaryComputerSource:
         today = dt.date.today()
 
         optical_dates = self.optical_dates or f"{today.year - 1}-11-01/{today.isoformat()}"
-        for name, fn in (
-            ("optical", lambda: clearest_optical(catalog, site, optical_dates)),
-            ("jrc_occurrence", lambda: jrc_occurrence(catalog, site)),
-            ("dem", lambda: dem(catalog, site)),
-        ):
+        try:
+            layers.optical = clearest_optical(catalog, site, optical_dates)
+        except Exception as exc:  # one failed layer must not sink the assessment
+            layers.notes.append(f"optical unavailable: {exc.__class__.__name__}: {exc}")
+        for name, fn in (("jrc_occurrence", jrc_occurrence), ("dem", dem)):
             try:
-                setattr(layers, name, fn())
-            except Exception as exc:  # one failed layer must not sink the assessment
-                layers.notes.append(f"{name} unavailable: {exc.__class__.__name__}")
+                got = fn(catalog, site)
+            except Exception as exc:
+                layers.notes.append(f"{name} unavailable: {exc.__class__.__name__}: {exc}")
+                continue
+            if got is not None:
+                setattr(layers, name, got[0])
+                layers.item_ids[name] = got[1]
 
         try:
             start = today.replace(year=today.year - self.rain_years).isoformat()

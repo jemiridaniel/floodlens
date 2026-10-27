@@ -53,3 +53,17 @@ def test_distance_and_height():
     dem[150:] = 0.5
     assert w.height_above_water_m(dem, water) == pytest.approx(2.5)
     assert w.distance_to_water_m(np.zeros((5, 5), bool), 10) is None
+
+
+def test_ground_level_ignores_rooftops():
+    rng = np.random.default_rng(1)
+    dem = np.full((200, 200), 2.0) + rng.normal(0, 0.1, (200, 200))
+    roofs = rng.random((200, 200)) < 0.6
+    dem[roofs] += 12  # 60% of cells are 12 m roofs
+    water = np.zeros((200, 200), bool)
+    water[180:] = True
+    dem[water] = 0.0
+    around = ring_mask(Grid(2000, 10), 100)
+    h = w.height_above_water_m(dem, water, around_site=around)
+    assert h == pytest.approx(2.0, abs=0.5)  # ground, not roof height
+    assert w.height_above_water_m(dem, water, around_site=water) == 0.0  # site area all water

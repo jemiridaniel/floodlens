@@ -9,6 +9,7 @@ from .geo.sources import SiteLayers
 from .schemas import Metric
 
 JRC_PERMANENT = 50  # % occurrence above which a pixel counts as regular water
+GROUND_RADIUS_M = 100  # area around the site used to estimate ground level
 
 
 def compute_metrics(layers: SiteLayers) -> list[Metric]:
@@ -59,10 +60,10 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
             out.append(Metric(id="m_dist_water", label="Distance to nearest regular water", value=d, unit="m",
                               source="JRC + Sentinel-2", decimals=0))
         if layers.dem is not None:
-            h = w.height_above_water_m(layers.dem, ref_water)
+            h = w.height_above_water_m(layers.dem, ref_water, around_site=ring_mask(g, GROUND_RADIUS_M))
             if h is not None:
-                out.append(Metric(id="m_height_above_water", label="Height above nearest water", value=h,
-                                  unit="m", source="Copernicus DEM GLO-30"))
+                out.append(Metric(id="m_height_above_water", label="Ground height above nearest water", value=h,
+                                  unit="m", source=f"Copernicus DEM GLO-30, low point within {GROUND_RADIUS_M} m"))
 
     if layers.daily_rain_mm:
         day, mm = max(layers.daily_rain_mm, key=lambda x: x[1])

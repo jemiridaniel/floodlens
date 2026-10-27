@@ -87,9 +87,26 @@ def distance_to_water_m(water: np.ndarray, res_m: float) -> float | None:
     return float(dist[c, c])
 
 
-def height_above_water_m(dem: np.ndarray, water: np.ndarray) -> float | None:
-    """Site elevation minus the typical (median) elevation of nearby water. None if no water."""
+def ground_level_m(dem: np.ndarray, area: np.ndarray, pct: float = 10) -> float | None:
+    """Estimated ground level in an area of a surface model.
+
+    Copernicus GLO-30 is a surface model: in dense cities it partly measures roofs.
+    A low percentile of the cells around the site is a better ground estimate than
+    the single cell at the site.
+    """
+    vals = dem[area & np.isfinite(dem) & (dem != 0)]
+    return None if vals.size == 0 else float(np.percentile(vals, pct))
+
+
+def height_above_water_m(dem: np.ndarray, water: np.ndarray, around_site: np.ndarray | None = None) -> float | None:
+    """Ground level near the site minus the median surface of nearby water. None if no water."""
     if not water.any():
         return None
-    c = dem.shape[0] // 2
-    return float(dem[c, c] - np.median(dem[water]))
+    if around_site is None:
+        c = dem.shape[0] // 2
+        ground = float(dem[c, c])
+    else:
+        ground = ground_level_m(dem, around_site & ~water)
+        if ground is None:
+            return 0.0  # the site area is all water
+    return ground - float(np.median(dem[water]))

@@ -35,6 +35,10 @@ from .verifier import verify
 
 log = logging.getLogger(__name__)
 
+# Mandatory wherever no street-level report was found, including when no search ran at
+# all. The verifier enforces it, so it cannot be softened or dropped by the model.
+NO_STREET_REPORTS = ("No street-level flood reports found. This does not mean the site is safe.")
+
 MAX_MODEL_CALLS = 8
 MAX_VERIFY_ATTEMPTS = 2  # one submission, then one retry carrying the verifier's errors
 DETAIL_CHARS = 160  # steps are for display: keep each result short
@@ -75,6 +79,8 @@ Rules, enforced by a verifier that will reject your report:
    never read a number off an image.
 5. Finish by calling submit_report exactly once. Be concrete and brief; write for a loan
    officer, not a scientist. Say plainly what is uncertain.
+6. If you are told a required sentence is missing, put it in a caveat word for word. It is
+   there because absence of news is not evidence of safety, and it is not optional.
 """
 
 
@@ -206,6 +212,9 @@ def fallback_report(assessment: Assessment, why: str) -> Report:
         for mid, _ in top if mid in by_id
     ]
     caveats = [f"No written explanation: {why}", "The measurements and the score below are unaffected."]
+    caveats += required_sentences(assessment)  # the fallback is a report too
+    for group in s.missing_groups:
+        caveats.append(f"No {group} evidence for this site, so confidence is held at low.")
     if s.missing:
         caveats.append("Not measured for this site: " + ", ".join(s.missing) + ".")
     return Report(
@@ -287,6 +296,11 @@ def _run_tool(name: str, args: dict[str, Any], assessment: Assessment,
     return f"No tool named {name!r}.", f"unknown tool {name!r}", None
 
 
+def required_sentences(assessment: Assessment) -> list[str]:
+    """What this report is not allowed to leave out."""
+    return [] if assessment.has_street_reports else [NO_STREET_REPORTS]
+
+
 def explain(assessment: Assessment, layers: SiteLayers | None = None, client: Any | None = None,
             max_calls: int = MAX_MODEL_CALLS) -> AgentRun:
     """Have Muse Spark explain an already-scored assessment. Never raises on model failure:
@@ -314,10 +328,14 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
     settings = get_settings()
     tools = _tools(sorted(pngs), assessment.allowed_actions)
     extra_allowed = allowed_numbers(assessment)
+    required = required_sentences(assessment)
     steps: list[AgentStep] = []
     items: list[Any] = [_user_text(
         f"Assess the site in get_metrics ({assessment.label or 'unlabelled'}). "
         "Read the metrics, look at any evidence you need, then submit the report."
+        + ("" if not required else
+           "\n\nThis report MUST contain this sentence word for word, in a caveat:\n"
+           + "\n".join(required))
     )]
     run = AgentRun(report=fallback_report(assessment, "the model made no usable call"),
                    model=settings.spark_model, reasoning_effort=settings.reasoning_effort)
@@ -391,7 +409,8 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
             kind = "schema" if report is None else "verify"
             if report is not None and not errors:
                 verdict = verify(report.text(), stated_tier(report.text(), assessment.score.tier),
-                                 report.action.value, assessment.metrics, assessment.score, extra_allowed)
+                                 report.action.value, assessment.metrics, assessment.score,
+                                 extra_allowed, required)
                 errors = verdict.errors
             ok = report is not None and not errors
             add_step(kind, "submit_report" if kind == "schema" else "verifier",

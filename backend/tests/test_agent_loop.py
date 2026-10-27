@@ -78,7 +78,9 @@ GOOD = {
     ],
     "action": "approve_with_insurance",
     "rationale": "Half the ring floods on a wet date, which is the strongest single signal.",
-    "caveats": ["Radar can miss water trapped between buildings."],
+    # The synthetic assessment has no street-level reports, so this sentence is mandatory
+    # and the verifier rejects any report without it.
+    "caveats": ["Radar can miss water trapped between buildings.", loop.NO_STREET_REPORTS],
 }
 BAD_NUMBER = {**GOOD, "summary": "The site is 42 m from water and floods often."}
 
@@ -329,3 +331,29 @@ def test_a_wrong_typed_drivers_field_never_reaches_the_verifier(assessment, laye
     assert verified[0][0] == GOOD["summary"] + "\n" + GOOD["rationale"] + "\n" + "\n".join(
         d["why"] for d in GOOD["drivers"]) + "\n" + "\n".join(GOOD["caveats"])
     assert run.report.explained is True  # the retry still carries the run
+
+
+def test_a_report_without_the_mandatory_sentence_is_rejected(assessment, layers):
+    """Absence of news is not evidence of safety, so the caveat is not the model's call."""
+    assert assessment.has_street_reports is False
+    silent = {**GOOD, "caveats": ["Radar can miss water trapped between buildings."]}
+    client = FakeClient(call("submit_report", **silent), call("submit_report", **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+    assert run.report.explained is True  # the retry put it back
+    rejected = [s for s in run.steps if s.kind == "verify" and "must contain this sentence" in s.detail]
+    assert len(rejected) == 1
+    assert loop.NO_STREET_REPORTS in json.dumps(client.requests[0]["input"])  # asked for up front
+
+
+def test_the_sentence_is_not_required_when_street_reports_exist(assessment, layers):
+    assessment.has_street_reports = True
+    assert loop.required_sentences(assessment) == []
+    silent = {**GOOD, "caveats": ["Radar can miss water trapped between buildings."]}
+    run = loop.explain(assessment, layers, client=FakeClient(call("submit_report", **silent)))
+    assert run.report.explained is True
+
+
+def test_the_fallback_report_also_carries_the_sentence(assessment):
+    report = loop.fallback_report(assessment, "testing")
+    assert loop.NO_STREET_REPORTS in report.caveats
+    assert any("local history" in c for c in report.caveats)  # the missing group is named

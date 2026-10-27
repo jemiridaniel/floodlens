@@ -81,12 +81,17 @@ FEATURES: tuple[Feature, ...] = (
     Feature("m_max_daily_rain", 0.10, zero_at=60, full_at=200),
 )
 
+# Evidence groups. Losing one entirely is different from losing a metric: the score then
+# rests on kinds of evidence that were never meant to stand alone, so it is reported and
+# confidence is capped rather than the weight being quietly rescaled onto the rest.
 GROUPS: dict[str, tuple[str, ...]] = {
     "local history": ("m_reported_floods",),
-    "area screen": ("m_water_history_500", "m_wet_water_250", "m_dist_water", "m_height_above_water",
-                    "m_local_low_spot", "m_built_up_500", "m_wetland_500"),
+    "coastal and riverine": ("m_water_history_500", "m_wet_water_250", "m_dist_water",
+                             "m_height_above_water"),
+    "terrain and surface": ("m_local_low_spot", "m_built_up_500", "m_wetland_500"),
     "rainfall": ("m_max_daily_rain",),
 }
+AREA_SCREEN = ("coastal and riverine", "terrain and surface")  # the two halves of the 0.50
 
 TIER_CUTS = ((75, Tier.severe), (50, Tier.high), (25, Tier.moderate), (0, Tier.low))
 
@@ -111,7 +116,8 @@ def score(metrics: list[Metric]) -> Score:
     missing = [f.metric_id for f in FEATURES if f.metric_id not in by_id]
     total_w = sum(f.weight for f in present)
     if total_w == 0:
-        return Score(score=0, tier=Tier.low, confidence="low", contributions={}, missing=missing)
+        return Score(score=0, tier=Tier.low, confidence="low", contributions={}, missing=missing,
+                     missing_groups=list(GROUPS))
 
     contributions = {
         f.metric_id: round(100 * f.weight / total_w * f.risk(by_id[f.metric_id].value), 1) for f in present
@@ -119,5 +125,10 @@ def score(metrics: list[Metric]) -> Score:
     value = round(sum(contributions.values()), 1)
     covered = total_w / sum(f.weight for f in FEATURES)
     confidence = "high" if covered >= 0.85 else "medium" if covered >= 0.6 else "low"
+    # A whole kind of evidence missing is not the same as a gap inside one: the remaining
+    # weight is carrying work it was never weighted to carry, so say so and cap confidence.
+    gone = [g for g, ids in GROUPS.items() if all(i in missing for i in ids)]
+    if gone:
+        confidence = "low"
     return Score(score=value, tier=tier_for(value), confidence=confidence,
-                 contributions=contributions, missing=missing)
+                 contributions=contributions, missing=missing, missing_groups=gone)

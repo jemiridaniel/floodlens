@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +40,7 @@ class Score(BaseModel):
     confidence: str  # low | medium | high
     contributions: dict[str, float]  # metric id -> points added
     missing: list[str]
+    missing_groups: list[str] = []  # whole kinds of evidence absent; forces confidence low
 
 
 class AssessmentRequest(BaseModel):
@@ -61,6 +63,7 @@ class Assessment(BaseModel):
     allowed_actions: list[Action]
     evidence: dict[str, str] = {}
     notes: list[str] = []
+    has_street_reports: bool = False  # drives the mandatory "no street-level reports" line
 
 
 class Driver(BaseModel):
@@ -129,6 +132,11 @@ class FloodReport(BaseModel):
     publisher: str
     url: str
     quote: str  # 30 words or fewer
+    # Did the live page actually name this place? "false" means it did not and the report
+    # was dropped; "unknown" means we could not read the page (paywall, block, timeout).
+    text_verified: Literal["true", "false", "unknown"] = "unknown"
+    quote_found: bool | None = None  # None = not checkable (page unread)
+    phrase_found: bool | None = None  # the model's own wording, a secondary check only
 
 
 class FloodHistory(BaseModel):
@@ -143,3 +151,4 @@ class FloodHistory(BaseModel):
     cost_usd: float = 0.0
     from_cache: bool = False
     searched: bool = False  # False means we never got an answer, not that there were no floods
+    text_checked: bool = False  # cache entries written before the page check are upgraded on load

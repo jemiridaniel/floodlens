@@ -8,6 +8,8 @@ Rules:
    or within a small tolerance), the score, or a small allowlist (ring radii, years).
 3. The stated tier must equal the scorer's tier.
 4. The recommended action must be allowed for that tier.
+5. Any required sentence must appear verbatim. This is how the "no street-level flood
+   reports" caveat is made non-optional rather than left to the model's judgement.
 """
 from __future__ import annotations
 
@@ -47,8 +49,12 @@ def _matches(x: float, allowed: list[tuple[float, int]]) -> bool:
 
 
 def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Score,
-           extra_allowed: set[float] | None = None) -> Verdict:
+           extra_allowed: set[float] | None = None, required: list[str] | None = None) -> Verdict:
     errors: list[str] = []
+    flat = " ".join(text.split())
+    for phrase in required or []:
+        if " ".join(phrase.split()) not in flat:
+            errors.append(f"the report must contain this sentence exactly: {phrase!r}")
     allowed = [(m.value, m.decimals) for m in metrics] + [(score.score, 1)]
     ok_set = ALWAYS_OK | (extra_allowed or set())
 

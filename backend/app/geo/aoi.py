@@ -39,6 +39,14 @@ def bbox(site: Site, size_m: float) -> tuple[float, float, float, float]:
     return site.lon - dlon, site.lat - dlat, site.lon + dlon, site.lat + dlat
 
 
+def distance_m(a: Site, b: Site) -> float:
+    """Great-circle distance between two sites, in metres."""
+    lat1, lat2 = math.radians(a.lat), math.radians(b.lat)
+    dlat, dlon = lat2 - lat1, math.radians(b.lon - a.lon)
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * 6_371_000 * math.asin(min(1.0, math.sqrt(h)))
+
+
 def distance_grid(grid: Grid) -> np.ndarray:
     """Distance in metres from the site (grid centre) to each pixel centre."""
     n = grid.side

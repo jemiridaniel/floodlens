@@ -60,3 +60,26 @@ def test_a_number_in_a_source_is_still_not_quotable():
     v = verify("About 14% of the ring was wet.", "High", "adjust_terms", METRICS, SCORE)
     assert not v.ok and any("14" in e for e in v.errors)
     assert verify("Threshold was -14.0 dB.", "High", "adjust_terms", METRICS, SCORE).errors
+
+
+def test_a_required_sentence_must_be_present_word_for_word():
+    missing = verify("All quiet here.", "High", "approve_with_insurance", METRICS, SCORE,
+                     required=["No street-level flood reports found. This does not mean the site is safe."])
+    assert not missing.ok
+    assert any("must contain this sentence exactly" in e for e in missing.errors)
+
+    present = verify("All quiet here. No street-level flood reports found. This does not mean the "
+                     "site is safe.", "High", "approve_with_insurance", METRICS, SCORE,
+                     required=["No street-level flood reports found. This does not mean the site is safe."])
+    assert present.ok, present.errors
+
+
+def test_a_required_sentence_tolerates_line_wrapping_only():
+    phrase = "No street-level flood reports found. This does not mean the site is safe."
+    wrapped = verify("No street-level flood reports found.\n   This does not mean the site is safe.",
+                     "High", "approve_with_insurance", METRICS, SCORE, required=[phrase])
+    assert wrapped.ok, wrapped.errors
+
+    reworded = verify("No street-level flood reports were found; that is not a guarantee.",
+                      "High", "approve_with_insurance", METRICS, SCORE, required=[phrase])
+    assert not reworded.ok  # paraphrase is not enough

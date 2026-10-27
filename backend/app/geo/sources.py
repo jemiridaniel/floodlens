@@ -186,6 +186,18 @@ def wettest_days(rain: list[tuple[str, float]], n: int = 3, min_gap_days: int = 
     return picked
 
 
+def try_twice(label: str, fn, notes: list[str]):
+    """Run fn, retrying once. Planetary Computer fails transiently, and a layer lost to a
+    blip silently rescales the score, so it is worth one more go before giving up."""
+    for attempt in (1, 2):
+        try:
+            return fn()
+        except Exception as exc:
+            if attempt == 2:
+                notes.append(f"{label} unavailable after 2 tries: {exc.__class__.__name__}: {exc}")
+    return None
+
+
 class PlanetaryComputerSource:
     """Real data from Microsoft Planetary Computer + Open-Meteo."""
 
@@ -199,34 +211,24 @@ class PlanetaryComputerSource:
         today = dt.date.today()
 
         optical_dates = self.optical_dates or f"{today.year - 1}-11-01/{today.isoformat()}"
-        try:
-            layers.optical = clearest_optical(catalog, site, optical_dates)
-        except Exception as exc:  # one failed layer must not sink the assessment
-            layers.notes.append(f"optical unavailable: {exc.__class__.__name__}: {exc}")
+        layers.optical = try_twice("optical",
+                                   lambda: clearest_optical(catalog, site, optical_dates), layers.notes)
         for name, fn in (("jrc_occurrence", jrc_occurrence), ("dem", dem), ("landcover", landcover)):
-            try:
-                got = fn(catalog, site)
-            except Exception as exc:
-                layers.notes.append(f"{name} unavailable: {exc.__class__.__name__}: {exc}")
-                continue
+            got = try_twice(name, lambda fn=fn: fn(catalog, site), layers.notes)
             if got is not None:
                 setattr(layers, name, got[0])
                 layers.item_ids[name] = got[1]
 
-        try:
-            start = today.replace(year=today.year - self.rain_years).isoformat()
-            end = (today - dt.timedelta(days=7)).isoformat()  # archive lags a few days
-            layers.daily_rain_mm = daily_rain(site, start, end)
-        except Exception as exc:
-            layers.notes.append(f"rainfall unavailable: {exc.__class__.__name__}")
+        start = today.replace(year=today.year - self.rain_years).isoformat()
+        end = (today - dt.timedelta(days=7)).isoformat()  # archive lags a few days
+        layers.daily_rain_mm = try_twice("rainfall", lambda: daily_rain(site, start, end),
+                                         layers.notes) or []
 
         # A date the site is known to have flooded beats inferring one from rainfall:
         # heavy rain somewhere in the grid is not the same as water at the site.
         for day, _ in [(wet_date, None)] if wet_date else wettest_days(layers.daily_rain_mm):
-            try:
-                layers.radar = radar_near(catalog, site, day)
-            except Exception as exc:
-                layers.notes.append(f"radar unavailable: {exc.__class__.__name__}")
+            layers.radar = try_twice("radar", lambda day=day: radar_near(catalog, site, day),
+                                     layers.notes)
             if layers.radar:
                 break
         if wet_date and layers.radar is None:

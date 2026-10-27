@@ -224,9 +224,71 @@ def test_pluvial_site_with_no_water_nearby_still_scores(layers):
 
 
 def test_the_three_groups_carry_their_documented_weight():
-    """The split is a design decision, not an accident of editing."""
-    from app.scoring import GROUPS
+    """The split is a design decision, not an accident of editing. FROZEN: changing these
+    numbers needs new, independent validation sites, not a better-looking table."""
+    from app.scoring import AREA_SCREEN, GROUPS
     weight = {f.metric_id: f.weight for f in FEATURES}
-    assert {g: round(sum(weight[m] for m in ids), 2) for g, ids in GROUPS.items()} == {
-        "local history": 0.40, "area screen": 0.50, "rainfall": 0.10}
+    by_group = {g: round(sum(weight[m] for m in ids), 2) for g, ids in GROUPS.items()}
+    assert by_group == {"local history": 0.40, "coastal and riverine": 0.25,
+                        "terrain and surface": 0.25, "rainfall": 0.10}
+    assert round(sum(by_group[g] for g in AREA_SCREEN), 2) == 0.50  # the area screen
     assert set(weight) == {m for ids in GROUPS.values() for m in ids}  # every feature in a group
+
+
+# ------------------------------------------- evidence groups and layer retries
+
+
+def test_a_wholly_missing_group_caps_confidence_and_is_named(layers):
+    """Losing one metric rescales. Losing a whole kind of evidence must be said out loud."""
+    from app.scoring import GROUPS
+    layers.landcover = None  # takes out built-up and wetland
+    layers.dem = None        # ...and the low spot: the whole terrain and surface group
+    s = score(compute_metrics(layers))
+    assert "terrain and surface" in s.missing_groups
+    assert s.confidence == "low"
+    assert set(s.missing_groups) <= set(GROUPS)
+
+
+def test_a_partly_missing_group_is_not_flagged(layers):
+    layers.landcover = None  # built-up and wetland go, the low spot stays
+    s = score(compute_metrics(layers))
+    assert "terrain and surface" not in s.missing_groups
+
+
+def test_offline_metrics_always_lack_local_history(layers):
+    """compute_metrics never produces m_reported_floods, so the group is always absent
+    without a search: an area-screen-only assessment is honestly low confidence."""
+    s = score(compute_metrics(layers))
+    assert s.missing_groups == ["local history"]
+    assert s.confidence == "low"
+
+
+def test_no_metrics_names_every_group():
+    from app.scoring import GROUPS
+    assert set(score([]).missing_groups) == set(GROUPS)
+
+
+def test_a_layer_is_retried_once_before_being_given_up_on():
+    from app.geo.sources import try_twice
+    notes: list[str] = []
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("transient")
+        return "layer"
+
+    assert try_twice("optical", flaky, notes) == "layer"
+    assert len(calls) == 2 and notes == []  # recovered, and nothing to report
+
+    notes.clear()
+    always = []
+
+    def broken():
+        always.append(1)
+        raise RuntimeError("down")
+
+    assert try_twice("optical", broken, notes) is None
+    assert len(always) == 2
+    assert notes and "after 2 tries" in notes[0] and "RuntimeError" in notes[0]

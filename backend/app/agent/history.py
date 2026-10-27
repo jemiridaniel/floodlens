@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import html as html_lib
 import json
 import logging
 import re
@@ -50,10 +51,23 @@ NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "FloodLens/0.1 flood-history lookup (OSM Nominatim policy: 1 req/s)"
 CACHE_DIR = Path(__file__).resolve().parents[3] / "data" / "cache" / "history"
 
-# A street-level report is direct evidence about this address; an area-level one says the
-# district floods, which is weaker. These are priors, not fitted.
-MATCH_WEIGHT = {MatchLevel.street: 1.0, MatchLevel.estate: 0.6, MatchLevel.area: 0.3}
-SAME_EVENT_DAYS = 7  # reports within a week are one flood, not several
+# A street-level report is direct evidence about this address; an estate-level one is
+# weaker. Area matches score NOTHING: 27 of 30 random Lagos addresses turned up an
+# area-level report, because a report naming a district matches everywhere inside it.
+# They are still kept and shown, as context for the reader, but they move no number.
+MATCH_WEIGHT = {MatchLevel.street: 1.0, MatchLevel.estate: 0.6, MatchLevel.area: 0.0}
+SAME_EVENT_DAYS = 3  # reports within three days are one flood, not several
+
+# Reading the page itself. Grounding says the search tool fetched the URL; it does not say
+# the article mentions this street. Publishers block unknown clients, so a normal browser
+# user agent, and a failure is "unknown" rather than evidence against the report.
+FETCH_TIMEOUT_S = 10
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+SCRIPTS = re.compile(r"<(script|style|noscript)\b[^>]*>.*?</\1>", re.S | re.I)
+MARKUP = re.compile(r"<[^>]+>")
+PLACE_WORDS = 3  # a place name leads with its distinctive words
+QUOTE_WORDS = 8
 
 
 @dataclass(frozen=True)
@@ -65,39 +79,67 @@ class Place:
     area: str | None
     lga: str | None
     state: str = "Lagos"
+    neighbourhood: str | None = None  # from the coarser lookup; often the name locals use
 
     @property
     def names(self) -> list[str]:
-        return [n for n in (self.street, self.estate, self.area, self.lga) if n]
+        seen: list[str] = []
+        for n in (self.street, self.estate, self.neighbourhood, self.area, self.lga):
+            if n and flatten(n) not in {flatten(x) for x in seen}:
+                seen.append(n)
+        return seen
+
+    @property
+    def street_names(self) -> list[str]:
+        return [n for n in (self.street,) if n]
+
+    @property
+    def estate_names(self) -> list[str]:
+        return [n for n in (self.estate, self.neighbourhood) if n]
+
+    @property
+    def area_names(self) -> list[str]:
+        return [n for n in (self.area, self.lga) if n]
 
     def describe(self) -> str:
         return ", ".join(self.names + [self.state]) or self.state
 
     def key(self) -> str:
-        raw = "|".join(n or "" for n in (self.street, self.estate, self.area, self.lga, self.state))
+        raw = "|".join(n or "" for n in (self.street, self.estate, self.neighbourhood,
+                                         self.area, self.lga, self.state))
         slug = re.sub(r"[^a-z0-9]+", "-", raw.casefold()).strip("-")[:60]
         return f"{slug or 'unknown'}-{hashlib.sha1(raw.encode()).hexdigest()[:8]}"
 
 
+def _reverse(site: Site, zoom: int, c: httpx.Client) -> dict:
+    r = c.get(NOMINATIM, params={"lat": site.lat, "lon": site.lon, "format": "jsonv2",
+                                 "zoom": zoom, "addressdetails": 1})
+    r.raise_for_status()
+    time.sleep(1.1)  # Nominatim allows one request a second
+    return r.json()
+
+
 def reverse_geocode(site: Site, client: httpx.Client | None = None) -> Place:
-    """Nominatim reverse lookup: the street, estate or neighbourhood, and the LGA."""
+    """Two Nominatim lookups: zoom 18 for the street, and a coarser zoom 14 for the name
+    locals and reporters actually use. Both run for every site, validation and baseline
+    alike, so the comparison stays fair."""
     c = client or httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
     try:
-        r = c.get(NOMINATIM, params={"lat": site.lat, "lon": site.lon, "format": "jsonv2",
-                                     "zoom": 18, "addressdetails": 1})
-        r.raise_for_status()
-        a = r.json().get("address", {})
+        fine = _reverse(site, 18, c)
+        coarse = _reverse(site, 14, c)
     finally:
         if client is None:
             c.close()
-            time.sleep(1.1)  # Nominatim allows one request a second
-    first = lambda *keys: next((a[k] for k in keys if a.get(k)), None)  # noqa: E731
+    a = fine.get("address", {})
+    ca = coarse.get("address", {})
+    first = lambda d, *keys: next((d[k] for k in keys if d.get(k)), None)  # noqa: E731
     return Place(
-        street=first("road", "pedestrian", "residential_road"),
-        estate=first("neighbourhood", "residential", "quarter", "hamlet"),
-        area=first("suburb", "city_district", "town", "village"),
-        lga=first("county", "municipality", "city", "state_district"),
-        state=first("state") or "Lagos",
+        street=first(a, "road", "pedestrian", "residential_road"),
+        estate=first(a, "neighbourhood", "residential", "quarter", "hamlet"),
+        area=first(a, "suburb", "city_district", "town", "village"),
+        lga=first(a, "county", "municipality", "city", "state_district"),
+        state=first(a, "state") or "Lagos",
+        neighbourhood=coarse.get("name") or first(ca, "suburb", "neighbourhood", "town"),
     )
 
 
@@ -153,6 +195,110 @@ def _instructions(place: Place, since: dt.date) -> str:
         "Do not pad it with reports about other parts of Lagos.\n\n"
         "Finish by calling submit_flood_history exactly once."
     )
+
+
+# "James Kunle St" and "James Kunle Street" are the same street. Both sides of every
+# comparison are expanded, so it does not matter which form the article uses.
+ABBREVIATIONS = {
+    "rd": "road", "st": "street", "str": "street", "ave": "avenue", "av": "avenue",
+    "cres": "crescent", "cl": "close", "dr": "drive", "ln": "lane", "blvd": "boulevard",
+    "hwy": "highway", "expy": "expressway", "expwy": "expressway", "sq": "square",
+    "pl": "place", "jct": "junction", "jcn": "junction", "mkt": "market", "est": "estate",
+}
+
+
+def flatten(text: str) -> str:
+    """Lowercase words only, abbreviations expanded, so punctuation, curly quotes and
+    markup spacing cannot break a match."""
+    words = re.sub(r"[^a-z0-9]+", " ", text.casefold()).split()
+    return " ".join(ABBREVIATIONS.get(w, w) for w in words)
+
+
+def says(flat_page: str, phrase: str) -> bool:
+    """Does the page contain this phrase as whole words?
+
+    Whole words matter: "Ojo" must not match "Ojota", which a plain substring test would.
+    """
+    flat = flatten(phrase)
+    return bool(flat) and f" {flat} " in f" {flat_page} "
+
+
+def page_text(url: str, client: Any) -> str | None:
+    """The readable text of a page, or None if we could not get it."""
+    try:
+        r = client.get(url, timeout=FETCH_TIMEOUT_S, follow_redirects=True,
+                       headers={"User-Agent": BROWSER_UA,
+                                "Accept": "text/html,application/xhtml+xml,*/*"})
+    except Exception:
+        return None
+    if getattr(r, "status_code", 0) >= 400:
+        return None
+    body = getattr(r, "text", "") or ""
+    if not body.strip():
+        return None
+    return html_lib.unescape(MARKUP.sub(" ", SCRIPTS.sub(" ", body)))
+
+
+def level_on_page(flat_page: str, place: Place) -> MatchLevel | None:
+    """How closely the page matches OUR site, judged on OUR names.
+
+    This is the check that decides match_level, not the model's opinion of it. A report
+    is street-level only when the article contains the street name the reverse geocode
+    gave us and the search was given. None means the article never names this place at
+    all, which is grounds to drop it.
+    """
+    for level, names in ((MatchLevel.street, place.street_names),
+                         (MatchLevel.estate, place.estate_names),
+                         (MatchLevel.area, place.area_names)):
+        if any(says(flat_page, n) for n in names):
+            return level
+    return None
+
+
+def check_text(reports: list[FloodReport], place: Place,
+               client: Any | None = None) -> tuple[list[FloodReport], list[str]]:
+    """Open each page and ask whether it is about our site. Drops explicit contradictions.
+
+    Grounding proved the search tool fetched the URL. It did not prove the article is
+    about this street, and the model's own match_level is just its opinion. So the page
+    is searched for our names, and match_level is set from what is actually there. The
+    model's phrase and its quote are kept as secondary checks and recorded, never
+    decisive.
+    """
+    own = client is None
+    if own:
+        client = httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_S)
+    kept: list[FloodReport] = []
+    dropped: list[str] = []
+    try:
+        for r in reports:
+            body = page_text(r.url, client)
+            if body is None:
+                r.text_verified, r.quote_found, r.phrase_found = "unknown", None, None
+                kept.append(r)  # a paywall is not evidence against a report
+                continue
+            flat = flatten(body)
+            level = level_on_page(flat, place)
+            r.phrase_found = says(flat, r.place_named)
+            r.quote_found = says(flat, r.quote.rstrip("…"))
+            if level is None:
+                r.text_verified = "false"
+                dropped.append(f"{r.place_named} / {r.event_date}: the page at {r.url} names "
+                               f"none of {place.describe()}")
+                continue
+            if level != r.match_level:
+                dropped.append(f"{r.place_named} / {r.event_date}: kept, but demoted from "
+                               f"{r.match_level.value} to {level.value} by the page text"
+                               if MATCH_WEIGHT[level] < MATCH_WEIGHT[r.match_level]
+                               else f"{r.place_named} / {r.event_date}: kept, match level "
+                                    f"corrected from {r.match_level.value} to {level.value}")
+            r.match_level = level
+            r.text_verified = "true"
+            kept.append(r)
+    finally:
+        if own:
+            client.close()
+    return kept, dropped
 
 
 def _normalise(url: str) -> str:
@@ -243,7 +389,14 @@ def history_metric(history: FloodHistory) -> Metric | None:
     events = distinct_events(history.reports)
     total = sum(w for _, w in events)
     levels = sorted({r.match_level.value for r in history.reports})
-    detail = f"{len(events)} event(s), {'/'.join(levels)} match" if events else "none found"
+    unread = sum(1 for r in history.reports if r.text_verified != "true")
+    area_only = sum(1 for r in history.reports if r.match_level == MatchLevel.area)
+    detail = (f"{len(events)} scoring event(s), {'/'.join(levels)} match"
+              if history.reports else "none found")
+    if area_only:
+        detail += f"; {area_only} area-level report(s) listed as context but scoring 0"
+    if unread:
+        detail += f"; {unread} report(s) whose page could not be read to confirm the place"
     return Metric(
         id="m_reported_floods",
         label=f"Flooding reported here in news, last {YEARS_BACK} years (weighted by how closely "
@@ -290,7 +443,8 @@ def _search_calls(resp: Any) -> int:
 
 
 def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
-           place: Place | None = None, today: dt.date | None = None) -> FloodHistory:
+           place: Place | None = None, today: dt.date | None = None,
+           http: Any | None = None) -> FloodHistory:
     """Flood history for one site. Cached per place, so neighbouring sites pay once."""
     place = place or reverse_geocode(site)
     cache_dir = CACHE_DIR if cache_dir is None else cache_dir
@@ -298,9 +452,16 @@ def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
     if cached.exists():
         got = FloodHistory.model_validate_json(cached.read_text())
         got.from_cache = True
+        if not got.text_checked:
+            # Written before the page check existed. The search is the expensive part, so
+            # upgrade the entry in place rather than paying to search again.
+            got.reports, failed = check_text(got.reports, place, http)
+            got.dropped += failed
+            got.text_checked = True
+            cached.write_text(got.model_dump_json(indent=2))
         return got
 
-    history = _ask(place, client, today or dt.date.today())
+    history = _ask(place, client, today or dt.date.today(), http)
     if history.searched:  # never cache a failed call
         cache_dir.mkdir(parents=True, exist_ok=True)
         cached.write_text(history.model_dump_json(indent=2))
@@ -310,7 +471,7 @@ def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
     return history
 
 
-def _ask(place: Place, client: Any | None, today: dt.date) -> FloodHistory:
+def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = None) -> FloodHistory:
     settings = get_settings()
     own = client is None
     if own:
@@ -358,9 +519,11 @@ def _ask(place: Place, client: Any | None, today: dt.date) -> FloodHistory:
                 out.dropped.append(f"submit_flood_history was not valid JSON: {exc}")
                 raw = []
             kept, dropped = keep_reports(raw if isinstance(raw, list) else [], cited, since)
+            kept, failed_text = check_text(kept, place, http)
             out.reports = kept
-            out.dropped += dropped
+            out.dropped += dropped + failed_text
             out.searched = True
+            out.text_checked = True
             break
         else:
             out.dropped.append(f"no submit_flood_history call in {MAX_MODEL_CALLS} model calls")

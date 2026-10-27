@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from app.agent.history import lookup as flood_history_lookup
-from app.geo.aoi import Grid, Site, ring_mask
+from app.geo.aoi import Grid, Site, distance_m, ring_mask
 from app.geo.sources import PlanetaryComputerSource, _catalog, landcover
 from app.geo.water import share_within
 from app.pipeline import assess
@@ -34,6 +34,7 @@ LAGOS_BBOX = (6.40, 6.70, 3.10, 3.60)  # lat_min, lat_max, lon_min, lon_max
 BASELINE_SEED = 20261027  # fixed, so the baseline is the same set every run
 PROBE = Grid(size_m=500, res_m=10)  # just wide enough for the 250 m built-up test
 BUILT_UP_MIN = 0.50
+MIN_FROM_VALIDATION_M = 1000  # a baseline point next door to a flood site is not independent
 WORLDCOVER_BUILT_UP, WORLDCOVER_WATER = 50, 80
 SCORED = [f.metric_id for f in FEATURES]  # the five metrics the score is built from
 HEADS = {
@@ -115,16 +116,26 @@ def is_built_up(lc, grid: Grid) -> tuple[bool, float]:
     return bool(share is not None and share >= BUILT_UP_MIN and centre != WORLDCOVER_WATER), share or 0.0
 
 
-def sample_built_up(n: int, seed: int = BASELINE_SEED) -> list[tuple[float, float, float]]:
-    """n random (lat, lon, built-up %) points inside built-up Lagos. Deterministic."""
+def sample_built_up(n: int, seed: int = BASELINE_SEED,
+                    avoid: list[Site] | None = None) -> list[tuple[float, float, float]]:
+    """n random (lat, lon, built-up %) points inside built-up Lagos. Deterministic.
+
+    Points within MIN_FROM_VALIDATION_M of a validation site are resampled: one landed on
+    the same street as a flood site in an earlier run, which both contaminates the negative
+    class and shares its cached flood history.
+    """
     rng = np.random.default_rng(seed)
     catalog = _catalog()
     lat0, lat1, lon0, lon1 = LAGOS_BBOX
     picked: list[tuple[float, float, float]] = []
+    near = 0
     tries = 0
     while len(picked) < n and tries < 30 * n:
         tries += 1
         lat, lon = float(rng.uniform(lat0, lat1)), float(rng.uniform(lon0, lon1))
+        if any(distance_m(Site(lat, lon), v) < MIN_FROM_VALIDATION_M for v in avoid or []):
+            near += 1
+            continue
         try:
             got = landcover(catalog, Site(lat, lon), PROBE)
         except Exception:
@@ -135,7 +146,9 @@ def sample_built_up(n: int, seed: int = BASELINE_SEED) -> list[tuple[float, floa
         if ok:
             picked.append((lat, lon, 100 * share))
     print(f"    {len(picked)} points from {tries} draws "
-          f"({100 * len(picked) / max(tries, 1):.0f}% of the box is built-up land)")
+          f"({100 * len(picked) / max(tries, 1):.0f}% of the box is built-up land)"
+          + (f", {near} resampled for being within {MIN_FROM_VALIDATION_M} m of a validation site"
+             if near else ""))
     return picked
 
 
@@ -288,7 +301,8 @@ def main() -> None:
     base: list[Row] = []
     if args.baseline:
         print(f"\n  Sampling {args.baseline} random built-up points in Lagos ...")
-        points = sample_built_up(args.baseline)
+        points = sample_built_up(args.baseline,
+                                 avoid=[Site(float(x["lat"]), float(x["lon"])) for x in sites])
         for i, (lat, lon, _share) in enumerate(points, 1):
             print(f"  [baseline {i}/{len(points)}] {lat:.4f},{lon:.4f} ...", flush=True)
             base.append(run_site({"site_id": f"bg{i:03d}", "label": f"{lat:.4f},{lon:.4f}",

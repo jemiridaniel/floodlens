@@ -32,14 +32,20 @@ def assess(req: AssessmentRequest, source: LayerSource,
     if layers.radar:
         evidence["radar"] = layers.radar.item_id
     notes = list(layers.notes)
+    street = False
     if history is not None:
         evidence.update({f"report_{i}": r.url for i, r in enumerate(history.reports, 1)})
         notes += [f"flood history: {d}" for d in history.dropped]
+        street = any(r.match_level == "street" for r in history.reports)
+    for group in s.missing_groups:
+        notes.append(f"NO {group.upper()} EVIDENCE: that whole group is missing for this site, so "
+                     "the score rests on the others and confidence is held at low.")
     return Assessment(
         id=uuid.uuid4().hex[:12],
         lat=req.lat, lon=req.lon, label=req.label,
         metrics=metrics, score=s,
         allowed_actions=ALLOWED_ACTIONS[s.tier],
         evidence=evidence,
-        notes=notes if flood_history is not None else layers.notes,
+        notes=notes,
+        has_street_reports=street,
     )

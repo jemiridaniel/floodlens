@@ -143,7 +143,7 @@ def dem(catalog, site: Site) -> tuple[np.ndarray, str] | None:
     return read_window(item.assets["data"].href, site, GRID), item.id
 
 
-def landcover(catalog, site: Site) -> tuple[np.ndarray, str] | None:
+def landcover(catalog, site: Site, grid: Grid = GRID) -> tuple[np.ndarray, str] | None:
     """ESA WorldCover 10 m land cover classes (verified against the STAC catalog: collection
     esa-worldcover, asset "map", classes 50 built-up / 90 herbaceous wetland / 95 mangroves).
     One item per product year, so take the most recent."""
@@ -153,7 +153,7 @@ def landcover(catalog, site: Site) -> tuple[np.ndarray, str] | None:
     item = covering_item(items, site)
     if item is None:
         return None
-    return read_window(item.assets["map"].href, site, GRID, Resampling.nearest), item.id
+    return read_window(item.assets["map"].href, site, grid, Resampling.nearest), item.id
 
 
 def daily_rain(site: Site, start: str, end: str, client: httpx.Client | None = None) -> list[tuple[str, float]]:

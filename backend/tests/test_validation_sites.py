@@ -20,7 +20,8 @@ from .conftest import FakeSource, make_layers
 
 SITES_CSV = Path(__file__).resolve().parents[2] / "data" / "validation_sites.csv"
 LAGOS = {"lat": (6.3, 6.8), "lon": (3.0, 3.7)}  # anything outside this is a geocoding slip
-COLUMNS = {"site_id", "label", "lat", "lon", "expected", "wet_date", "evidence_url", "geocode", "notes"}
+COLUMNS = {"site_id", "label", "lat", "lon", "expected", "wet_date", "evidence_url",
+           "geocode_quality", "geocode", "notes"}
 
 
 @pytest.fixture(scope="module")
@@ -113,13 +114,7 @@ def test_a_given_wet_date_replaces_the_rainfall_guess(monkeypatch):
 
 def test_validate_has_a_column_head_for_every_scored_metric():
     """validate.py prints one column per FEATURE, so a new feature needs a heading."""
-    import importlib.util
-    import sys
-    spec = importlib.util.spec_from_file_location(
-        "_validate", Path(__file__).resolve().parents[1] / "scripts" / "validate.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod  # its dataclass needs the module importable while it runs
-    spec.loader.exec_module(mod)
+    mod = _validate()
     assert mod.SCORED == [f.metric_id for f in FEATURES]
     assert set(mod.HEADS) == set(mod.SCORED)
 
@@ -151,3 +146,93 @@ def test_worldcover_picks_the_newest_product_year(monkeypatch):
     got = sources.landcover(object(), Site(6.5, 3.3))
     assert got == ("grid", "ESA_WorldCover_10m_2021_v200")
     assert read == ["href://ESA_WorldCover_10m_2021_v200"]
+
+
+def test_geocode_quality_is_recorded(sites):
+    assert {s["geocode_quality"] for s in sites} <= {"ok", "approximate"}
+    approximate = {s["site_id"] for s in sites if s["geocode_quality"] == "approximate"}
+    assert "isashi_light_estate" in approximate  # OSM has no street, only a rounded node
+
+
+def test_approximate_pins_are_kept_out_of_the_summary():
+    """They still appear in the table, marked, but must not move the flood/dry stats."""
+    v = _validate()
+    rows = [v.Row(site_id="a", label="good", expected="flood", score=40.0, tier="Moderate",
+                  values={m: "1" for m in v.SCORED}),
+            v.Row(site_id="b", label="weak pin", expected="flood", quality="approximate", score=99.0,
+                  tier="Severe", values={m: "1" for m in v.SCORED})]
+    out = _capture(v.print_table, rows)
+    assert "weak pin" in out and "~" in out  # shown, and marked
+    assert "left out of the summary" in out or "real pin" in out
+    assert "mean  40.0" in out.replace("mean   40.0", "mean  40.0")  # 99.0 excluded
+    assert "99.0" in out  # the row itself is still printed
+
+
+def test_built_up_test_skips_open_water_and_no_data():
+    import numpy as np
+    v = _validate()
+    g = v.PROBE
+    city = np.full((g.side, g.side), 50, "float32")
+    assert v.is_built_up(city, g) == (True, 1.0)
+
+    lagoon = np.full((g.side, g.side), 80, "float32")
+    assert v.is_built_up(lagoon, g)[0] is False
+
+    half = city.copy()
+    half[:, : g.side // 2] = 80  # exactly half water: 50% built-up still clears the bar
+    assert v.is_built_up(half, g)[0] is True
+
+    mostly_water = city.copy()
+    mostly_water[:, : int(0.7 * g.side)] = 80  # well under 50% built-up
+    assert v.is_built_up(mostly_water, g)[0] is False
+
+    jetty = np.full((g.side, g.side), 50, "float32")
+    jetty[g.side // 2, g.side // 2] = 80  # built-up all round, but the point is in the water
+    assert v.is_built_up(jetty, g)[0] is False
+
+    partial = np.full((g.side, g.side), 0, "float32")  # no data must not dilute
+    partial[:, g.side // 2:] = 50
+    assert v.is_built_up(partial, g) == (True, 1.0)
+
+
+def test_sampling_is_deterministic_for_a_seed(monkeypatch):
+    import numpy as np
+    v = _validate()
+    monkeypatch.setattr(v, "_catalog", lambda: object())
+    monkeypatch.setattr(v, "landcover",
+                        lambda c, site, grid: (np.full((grid.side, grid.side), 50, "float32"), "lc"))
+    first = v.sample_built_up(5)
+    assert len(first) == 5
+    assert v.sample_built_up(5) == first
+    assert v.sample_built_up(5, seed=1) != first
+    for lat, lon, share in first:
+        assert 6.40 <= lat <= 6.70 and 3.10 <= lon <= 3.60 and share == 100.0
+
+
+def test_percentile_and_auc_counting():
+    v = _validate()
+    base = [10.0, 20.0, 30.0, 40.0]
+    assert v.percentile_of(5, base) == 0.0
+    assert v.percentile_of(50, base) == 100.0
+    assert v.percentile_of(25, base) == 50.0
+    assert v.percentile_of(20, base) == 37.5  # one below, one tie counted as half
+
+
+def _validate():
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "_validate", Path(__file__).resolve().parents[1] / "scripts" / "validate.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _capture(fn, *args):
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*args)
+    return buf.getvalue()

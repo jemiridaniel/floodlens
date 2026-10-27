@@ -19,6 +19,7 @@ class Settings:
     model_api_key: str | None
     baseten_api_key: str | None
     spark_model: str
+    reasoning_effort: str = "low"  # dev.meta.ai/docs/reasoning
     sam_model: str = "sam-3.1"
     screener_model: str = "meta-models/muse-spark-open-1026"
 
@@ -28,4 +29,5 @@ def get_settings() -> Settings:
         model_api_key=os.environ.get("MODEL_API_KEY") or None,
         baseten_api_key=os.environ.get("BASETEN_API_KEY") or None,
         spark_model=os.environ.get("FLOODLENS_SPARK_MODEL", "muse-spark-1.3"),
+        reasoning_effort=os.environ.get("FLOODLENS_REASONING_EFFORT", "low"),
     )

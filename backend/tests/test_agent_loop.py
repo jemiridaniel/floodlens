@@ -33,6 +33,8 @@ class FakeCall:
 class FakeUsage:
     input_tokens: int = 1200
     output_tokens: int = 300
+    input_tokens_details: dict = field(default_factory=lambda: {"cached_tokens": 0})
+    output_tokens_details: dict = field(default_factory=lambda: {"reasoning_tokens": 0})
 
 
 @dataclass
@@ -59,9 +61,10 @@ class FakeClient:
         return self.turns[0]
 
 
-def call(tool: str, **args) -> FakeResponse:
+def call(tool: str, usage: FakeUsage | None = None, **args) -> FakeResponse:
     """One model turn that calls one tool. (Named `tool` so a tool arg can be `name`.)"""
-    return FakeResponse(output=[FakeCall(name=tool, arguments=json.dumps(args))])
+    return FakeResponse(output=[FakeCall(name=tool, arguments=json.dumps(args))],
+                        usage=usage or FakeUsage())
 
 
 # Only numbers the metrics or the score state: 300 m, 2.0 m, 74.6, 50.0%, 25.0 points.
@@ -99,7 +102,7 @@ def test_clean_pass(assessment, layers):
     assert [s.kind for s in run.steps] == ["model", "tool", "model", "tool", "model", "verify"]
     assert run.steps[-1].detail == "accepted"
     assert run.input_tokens == 3600 and run.output_tokens == 900  # 3 calls x the canned usage
-    assert run.cost_usd == pytest.approx(loop.cost_usd(3600, 900))
+    assert run.cost_usd == pytest.approx(loop.cost_usd(run.model, 3600, 900, 0))
     assert run.cost_usd > 0
 
 
@@ -218,3 +221,53 @@ def test_tools_offer_only_available_evidence(assessment):
         "optical", "water_history", "water_now"]
     assert tools["submit_report"]["parameters"]["properties"]["action"]["enum"] == [
         a.value for a in assessment.allowed_actions]
+
+
+def test_prices_come_from_the_table_for_the_model_used():
+    m = 1_000_000
+    assert loop.cost_usd("muse-spark-1.3", m, m) == pytest.approx(1.25 + 4.25)
+    assert loop.cost_usd("muse-spark-1.3-contributor", m, m) == pytest.approx(0.10 + 0.20)
+    # cached input is a subset of input_tokens, billed at the cached rate
+    assert loop.cost_usd("muse-spark-1.3", m, 0, cached_tokens=m) == pytest.approx(0.15)
+    assert loop.cost_usd("muse-spark-1.3", m, 0, cached_tokens=400_000) == pytest.approx(0.6 * 1.25 + 0.4 * 0.15)
+    assert loop.cost_usd("muse-spark-1.3-contributor", m, 0, cached_tokens=m) == pytest.approx(0.002)
+    assert loop.cost_usd("some-unlisted-model", m, m) == 0.0  # logged, never guessed
+
+
+def test_reasoning_effort_defaults_to_low_and_follows_the_env(assessment, layers, monkeypatch):
+    monkeypatch.delenv("FLOODLENS_REASONING_EFFORT", raising=False)
+    client = FakeClient(call("submit_report", **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+    assert client.requests[0]["reasoning"] == {"effort": "low"}
+    assert run.reasoning_effort == "low"
+
+    monkeypatch.setenv("FLOODLENS_REASONING_EFFORT", "medium")
+    client = FakeClient(call("submit_report", **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+    assert client.requests[0]["reasoning"] == {"effort": "medium"}
+    assert run.reasoning_effort == "medium"
+
+
+def test_cached_and_reasoning_tokens_are_recorded_and_priced(assessment, layers):
+    usage = FakeUsage(input_tokens=2000, output_tokens=800,
+                      input_tokens_details={"cached_tokens": 1500},
+                      output_tokens_details={"reasoning_tokens": 650})
+    client = FakeClient(call("submit_report", usage=usage, **GOOD))
+    run = loop.explain(assessment, layers, client=client)
+    assert (run.input_tokens, run.cached_tokens) == (2000, 1500)
+    assert (run.output_tokens, run.reasoning_tokens) == (800, 650)
+    assert run.cost_usd == pytest.approx(loop.cost_usd(run.model, 2000, 800, 1500))
+    assert run.steps[0].cached_tokens == 1500 and run.steps[0].reasoning_tokens == 650
+
+
+def test_a_report_may_quote_a_date_the_metrics_state(assessment, layers):
+    """m_max_daily_rain's label carries its date; the verifier allows that date only."""
+    dated = {**GOOD, "rationale": "The heaviest day on record here was 2025-06-10."}
+    invented = {**GOOD, "rationale": "The site flooded on 2019-08-01."}
+    run = loop.explain(assessment, layers, client=FakeClient(call("submit_report", **dated)))
+    assert run.report.explained is True
+
+    client = FakeClient(call("submit_report", **invented), call("submit_report", **invented))
+    run = loop.explain(assessment, layers, client=client)
+    assert run.report.explained is False
+    assert any("2019-08-01" in e for e in run.errors)

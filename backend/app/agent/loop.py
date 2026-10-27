@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from openai import OpenAI
@@ -30,7 +31,7 @@ from ..config import META_BASE_URL, get_settings
 from ..evidence import VIEW_HELP, data_url, evidence_pngs
 from ..geo.sources import SiteLayers
 from ..schemas import Action, AgentRun, AgentStep, Assessment, Driver, Report, Tier
-from .verifier import numbers, verify
+from .verifier import verify
 
 log = logging.getLogger(__name__)
 
@@ -38,10 +39,25 @@ MAX_MODEL_CALLS = 8
 MAX_VERIFY_ATTEMPTS = 2  # one submission, then one retry carrying the verifier's errors
 DETAIL_CHARS = 160  # steps are for display: keep each result short
 
-# Estimated USD per 1M tokens for muse-spark-1.3. Update from the Meta billing page;
-# the per-assessment cost is logged so the $150 credit can be tracked.
-USD_PER_M_INPUT = 0.35
-USD_PER_M_OUTPUT = 1.40
+# Reasoning effort (dev.meta.ai/docs/reasoning). "none" is rejected by Spark, and "max"
+# is not available on the Contributor variant. Default low: this is a short explain task
+# over numbers the code already computed, so deep reasoning buys little.
+REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+@dataclass(frozen=True)
+class Price:
+    """USD per 1M tokens."""
+
+    input: float
+    cached_input: float
+    output: float
+
+
+PRICES: dict[str, Price] = {
+    "muse-spark-1.3": Price(input=1.25, cached_input=0.15, output=4.25),
+    "muse-spark-1.3-contributor": Price(input=0.10, cached_input=0.002, output=0.20),
+}
 
 INSTRUCTIONS = """You are FloodLens's analyst. You explain a flood-risk assessment of a \
 property used as loan collateral, for a Nigerian microfinance loan officer.
@@ -151,18 +167,12 @@ def metrics_payload(assessment: Assessment) -> dict[str, Any]:
 
 
 def allowed_numbers(assessment: Assessment) -> set[float]:
-    """Code-computed numbers the report may quote besides the metric values themselves.
+    """Code-computed numbers the report may quote beyond the metric values themselves.
 
-    The score and each metric's contribution, plus every number the metric labels and
-    sources already state. Those last ones matter because the verifier reads a date like
-    2025-06-10 as the numbers 6 and 10: quoting a date the metrics gave us is not
-    inventing a number, while anything the code never produced is still rejected.
+    Only the score and each metric's contribution. Dates are handled separately and as
+    whole tokens by the verifier, so nothing else from the labels or sources is admitted.
     """
-    stated = {float(v) for v in assessment.score.contributions.values()}
-    stated.add(float(assessment.score.score))
-    for m in assessment.metrics:
-        stated.update(numbers(f"{m.label} {m.source}"))
-    return stated
+    return {float(v) for v in assessment.score.contributions.values()} | {float(assessment.score.score)}
 
 
 TIER_CLAIM = "(?:{t})\\b(?:\\s+flood)?\\s+(?:risk|tier)|(?:risk|tier)\\s*(?:is|:)?\\s*(?:{t})\\b"
@@ -201,6 +211,15 @@ def fallback_report(assessment: Assessment, why: str) -> Report:
         caveats=caveats,
         explained=False,
     )
+
+
+def _sub_tokens(usage: Any, group: str, key: str) -> int:
+    """usage.input_tokens_details.cached_tokens and friends, tolerant of dicts and of
+    older responses that omit the detail objects entirely."""
+    d = getattr(usage, group, None)
+    if isinstance(d, dict):
+        return int(d.get(key) or 0)
+    return int(getattr(d, key, 0) or 0) if d is not None else 0
 
 
 def _short(text: str) -> str:
@@ -277,8 +296,10 @@ def explain(assessment: Assessment, layers: SiteLayers | None = None, client: An
     finally:
         if own:
             client.close()
-    log.info("assessment %s: explained=%s in %d model calls, %d in + %d out tokens, est $%.4f",
-             assessment.id, run.report.explained, run.calls, run.input_tokens, run.output_tokens, run.cost_usd)
+    log.info("assessment %s: explained=%s via %s (effort %s) in %d calls, "
+             "%d in (%d cached) + %d out (%d reasoning) tokens, est $%.6f",
+             assessment.id, run.report.explained, run.model, run.reasoning_effort, run.calls,
+             run.input_tokens, run.cached_tokens, run.output_tokens, run.reasoning_tokens, run.cost_usd)
     return run
 
 
@@ -291,14 +312,17 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
         f"Assess the site in get_metrics ({assessment.label or 'unlabelled'}). "
         "Read the metrics, look at any evidence you need, then submit the report."
     )]
-    run = AgentRun(report=fallback_report(assessment, "the model made no usable call"))
+    run = AgentRun(report=fallback_report(assessment, "the model made no usable call"),
+                   model=settings.spark_model, reasoning_effort=settings.reasoning_effort)
     rejections = 0
 
     def add_step(kind: str, name: str, detail: str, ms: int, usage: Any = None) -> None:
         steps.append(AgentStep(
             n=len(steps) + 1, kind=kind, name=name, detail=_short(detail), ms=ms,
             input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            cached_tokens=_sub_tokens(usage, "input_tokens_details", "cached_tokens"),
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            reasoning_tokens=_sub_tokens(usage, "output_tokens_details", "reasoning_tokens"),
         ))
 
     def finish(report: Report, errors: list[str]) -> AgentRun:
@@ -306,8 +330,10 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
         run.steps = steps
         run.errors = errors
         run.input_tokens = sum(s.input_tokens for s in steps)
+        run.cached_tokens = sum(s.cached_tokens for s in steps)
         run.output_tokens = sum(s.output_tokens for s in steps)
-        run.cost_usd = cost_usd(run.input_tokens, run.output_tokens)
+        run.reasoning_tokens = sum(s.reasoning_tokens for s in steps)
+        run.cost_usd = cost_usd(run.model, run.input_tokens, run.output_tokens, run.cached_tokens)
         return run
 
     errors: list[str] = []
@@ -317,6 +343,7 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
             resp = client.responses.create(
                 model=settings.spark_model, instructions=INSTRUCTIONS, input=items,
                 tools=tools, parallel_tool_calls=False,  # one call per turn keeps progress legible
+                reasoning={"effort": settings.reasoning_effort},
             )
         except Exception as exc:  # a model outage must not sink the assessment
             add_step("model", settings.spark_model, f"{exc.__class__.__name__}: {exc}",
@@ -369,5 +396,13 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
     return finish(fallback_report(assessment, f"the model did not finish within {max_calls} calls"), errors)
 
 
-def cost_usd(input_tokens: int, output_tokens: int) -> float:
-    return round(input_tokens / 1e6 * USD_PER_M_INPUT + output_tokens / 1e6 * USD_PER_M_OUTPUT, 4)
+def cost_usd(model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> float:
+    """Estimated USD for one run, priced for the model actually used. Cached input tokens
+    are billed at the cached rate and are a subset of input_tokens."""
+    price = PRICES.get(model)
+    if price is None:
+        log.warning("no price listed for model %r: reporting cost 0", model)
+        return 0.0
+    fresh = max(input_tokens - cached_tokens, 0)
+    total = fresh * price.input + cached_tokens * price.cached_input + output_tokens * price.output
+    return round(total / 1e6, 6)

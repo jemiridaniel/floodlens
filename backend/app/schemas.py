@@ -92,14 +92,20 @@ class AgentStep(BaseModel):
     detail: str = ""  # short, already truncated: safe to show
     ms: int = 0
     input_tokens: int = 0
+    cached_tokens: int = 0  # part of input_tokens, billed at the cached rate
     output_tokens: int = 0
+    reasoning_tokens: int = 0  # part of output_tokens
 
 
 class AgentRun(BaseModel):
     report: Report
     steps: list[AgentStep] = []
+    model: str = ""  # the model actually called, which is what the cost is priced on
+    reasoning_effort: str = ""
     calls: int = 0  # model calls used, capped by MAX_MODEL_CALLS
     input_tokens: int = 0
+    cached_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cost_usd: float = 0.0
     errors: list[str] = []  # verifier errors that forced a retry or the fallback

@@ -14,7 +14,7 @@ Flood-risk checks on loan collateral for Nigerian microfinance lenders. Entry fo
 ## Core design decisions (do not undo without asking)
 
 1. **Code measures, the LLM explains.** Every number in a report comes from `app/metrics.py`. The score is a fixed formula in `app/scoring.py`. Muse Spark never invents or changes numbers or tiers.
-2. **Verifier gate.** `app/agent/verifier.py` rejects reports with numbers not in the metrics, a wrong tier, or an action the tier does not allow. Keep it strict.
+2. **Verifier gate.** `app/agent/verifier.py` rejects reports with numbers not in the metrics, a wrong tier, or an action the tier does not allow. Keep it strict. Dates are the one special case: a `YYYY-MM-DD` token is allowed only if some metric's label or source states it, and dates are cut from the text before the number rule runs, so `2025-06-14` can never make `6` or `14` quotable. Nothing else in a label or source is quotable — a source reading `threshold -14.0 dB` does not make `14%` a measured value.
 3. **SAM 3.1 is not used to measure site water.** A pre-build test (`docs/day0-sam-test.md`) showed it finds nothing at 2 km / 10 m and only the lagoon at 5 km. SAM is for site photos and a 5 km context map.
 4. **The agent explains, it never measures.** `app/agent/loop.py` hands Muse Spark the metrics and the evidence PNGs and takes back one `submit_report` call. Numbers, tier and allowed actions are fixed before the model is called; `submit_report`'s action enum is the tier's allowed actions, so a disallowed action cannot even be expressed. Every report goes through the verifier: one rejection is retried with the errors, a second returns a metrics-only report with `explained: false`.
 5. **Cloud is normal over Lagos.** Optical water uses Sentinel-2 SCL and only clear pixels; radar and JRC history are core inputs. Every layer is optional and the score rescales weights, lowering confidence.
@@ -62,6 +62,15 @@ Keys live in `.env` at the repo root (never commit it; see `.env.example`).
 | Segmentation | `sam-3.1` (Responses API, streamed; parse with `meta_sam_parser`) | same |
 | Portfolio screener | `meta-models/muse-spark-open-1026` (exact ID) | `https://inference.baseten.co/v1`, key `BASETEN_API_KEY` |
 
+Prices (USD per 1M tokens, `PRICES` in `app/agent/loop.py`, looked up by the model actually called):
+
+| Model | Input | Cached input | Output |
+| --- | --- | --- | --- |
+| `muse-spark-1.3` | 1.25 | 0.15 | 4.25 |
+| `muse-spark-1.3-contributor` | 0.10 | 0.002 | 0.20 |
+
+Reasoning effort is `FLOODLENS_REASONING_EFFORT` (default `low`), sent as `reasoning={"effort": ...}`; reasoning tokens come back in `output_tokens_details.reasoning_tokens` and are counted in the run. `max` is not available on the Contributor variant.
+
 Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: https://dev.meta.ai/docs (tool calling, structured output, image understanding). Cookbook: https://github.com/meta-models/meta-model-cookbook (SAM example in `07_sam/01_api_basics`). Budget: $150 Meta credit, about $0.06 per assessment.
 
 ## Known issues (first real run, Lagos Island, Oct 27)
@@ -75,7 +84,7 @@ Meta's API is OpenAI-compatible: use the `openai` SDK with `base_url`. Docs: htt
 ## Next steps
 
 1. Fix the issues above using `--debug` output.
-2. ~~Muse Spark agent loop~~ built: `app/agent/loop.py`, Responses API, 3 tools, verifier with one retry then a metrics-only fallback. Still to do: stream the steps over SSE, add `segment_photo`, and replace the estimated token prices in `loop.py` with the real ones.
+2. ~~Muse Spark agent loop~~ built: `app/agent/loop.py`, Responses API, 3 tools, verifier with one retry then a metrics-only fallback. Still to do: stream the steps over SSE and add `segment_photo`.
 3. SAM 3.1 on site photos (`scripts/sam_photos.py` first, then a `segment_photo` tool).
 4. Next.js web app from the design (new assessment, agent at work with live steps over SSE, report, portfolio).
 5. Portfolio mode with the Baseten screener; validation sites; demo video.

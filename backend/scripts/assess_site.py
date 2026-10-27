@@ -69,10 +69,13 @@ def print_run(run) -> None:
     r = run.report
     print("\n  AGENT STEPS")
     for s in run.steps:
-        tok = f"{s.input_tokens:>6d} in {s.output_tokens:>5d} out" if s.input_tokens or s.output_tokens else " " * 19
+        tok = (f"{s.input_tokens:>6d} in {s.output_tokens:>5d} out ({s.reasoning_tokens:>5d} reasoning)"
+               if s.input_tokens or s.output_tokens else " " * 36)
         print(f"    {s.n:>2d} {s.kind:<6s} {s.name:<22s} {s.ms:>6d} ms  {tok}  {s.detail}")
-    print(f"\n  {len(run.steps)} steps, {run.calls} model calls, "
-          f"{run.input_tokens} in + {run.output_tokens} out tokens, est ${run.cost_usd:.4f}")
+    print(f"\n  {run.model} at reasoning effort {run.reasoning_effort}: {len(run.steps)} steps, "
+          f"{run.calls} model calls")
+    print(f"  tokens: {run.input_tokens} in ({run.cached_tokens} cached) + "
+          f"{run.output_tokens} out ({run.reasoning_tokens} reasoning), est ${run.cost_usd:.6f}")
     if run.errors:
         print("  verifier errors:")
         for e in run.errors:

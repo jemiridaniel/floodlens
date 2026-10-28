@@ -267,7 +267,7 @@ def level_on_page(flat_page: str, place: Place) -> MatchLevel | None:
 
 
 def check_text(reports: list[FloodReport], place: Place,
-               client: Any | None = None) -> tuple[list[FloodReport], list[str]]:
+               client: Any | None = None) -> tuple[list[FloodReport], list[str], list[str]]:
     """Open each page and ask whether it is about our site. Drops explicit contradictions.
 
     Grounding proved the search tool fetched the URL. It did not prove the article is
@@ -281,6 +281,7 @@ def check_text(reports: list[FloodReport], place: Place,
         client = httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_S)
     kept: list[FloodReport] = []
     dropped: list[str] = []
+    corrections: list[str] = []  # kept: a demotion is not a rejection and must not read as one
     try:
         for r in reports:
             body = page_text(r.url, client)
@@ -298,18 +299,17 @@ def check_text(reports: list[FloodReport], place: Place,
                                f"none of {place.describe()}")
                 continue
             if level != r.match_level:
-                dropped.append(f"{r.place_named} / {r.event_date}: kept, but demoted from "
-                               f"{r.match_level.value} to {level.value} by the page text"
-                               if MATCH_WEIGHT[level] < MATCH_WEIGHT[r.match_level]
-                               else f"{r.place_named} / {r.event_date}: kept, match level "
-                                    f"corrected from {r.match_level.value} to {level.value}")
+                direction = ("demoted" if MATCH_WEIGHT[level] < MATCH_WEIGHT[r.match_level]
+                             else "promoted")
+                corrections.append(f"{r.place_named} / {r.event_date}: {direction} from "
+                                   f"{r.match_level.value} to {level.value} by the page text")
             r.match_level = level
             r.text_verified = "true"
             kept.append(r)
     finally:
         if own:
             client.close()
-    return kept, dropped
+    return kept, dropped, corrections
 
 
 def _normalise(url: str) -> str:
@@ -466,8 +466,9 @@ def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
         if not got.text_checked:
             # Written before the page check existed. The search is the expensive part, so
             # upgrade the entry in place rather than paying to search again.
-            got.reports, failed = check_text(got.reports, place, http)
+            got.reports, failed, corrected = check_text(got.reports, place, http)
             got.dropped += failed
+            got.corrections += corrected
             got.text_checked = True
             cached.write_text(got.model_dump_json(indent=2))
         return got
@@ -530,9 +531,10 @@ def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = No
                 out.dropped.append(f"submit_flood_history was not valid JSON: {exc}")
                 raw = []
             kept, dropped = keep_reports(raw if isinstance(raw, list) else [], cited, since)
-            kept, failed_text = check_text(kept, place, http)
+            kept, failed_text, corrected = check_text(kept, place, http)
             out.reports = kept
             out.dropped += dropped + failed_text
+            out.corrections += corrected
             out.searched = True
             out.text_checked = True
             break

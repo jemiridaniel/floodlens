@@ -144,7 +144,8 @@ class FloodHistory(BaseModel):
 
     place: str
     reports: list[FloodReport] = []
-    dropped: list[str] = []  # one line per rejected item, saying why
+    dropped: list[str] = []  # one line per REJECTED item, saying why
+    corrections: list[str] = []  # kept, but the page changed its match level
     searches: int = 0
     input_tokens: int = 0
     output_tokens: int = 0

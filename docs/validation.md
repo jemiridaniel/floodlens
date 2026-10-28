@@ -117,9 +117,60 @@ evidence group forcing a visible note and low confidence; and the mandatory sent
 street-level flood reports found. This does not mean the site is safe." enforced by the
 verifier.
 
-## Run 4 - frozen scoring
+## Run 4 - frozen scoring. **AUC 0.856**
 
-See the table appended below once the run completes.
+| site | score | tier | reports | percentile |
+| --- | --- | --- | --- | --- |
+| Ago Palace Way, Okota | 42.5 | Moderate | 2.0 | 93.3 |
+| James Kunle St, Isashi | 19.1 | Low | 0.0 | (excluded, weak pin) |
+| Ojota-Maryland bridge | 56.4 | High | 2.6 | 100.0 |
+| Lekki Phase 1 | 29.9 | Moderate | 0.6 | 63.3 |
+
+Baseline (n=30): min 7.1, p25 19.1, median 23.4, p75 33.5, max 53.1. A random point
+outscores a flood site in 14.4% of 90 pairs. No site was degraded or abandoned.
+
+**Read the jump from 0.622 carefully. Three reasons it is not as good as it looks.**
+
+1. **The baseline is a different sample.** 5 points were rejected for being in Ogun State,
+   not Lagos — the bounding box reaches past the state line, so earlier baselines were
+   partly not Lagos at all. Run 3 and Run 4 AUCs are not strictly comparable.
+2. **Most of the gain is the baseline falling, not the flood sites rising.** Baseline
+   median went 30.4 -> 23.4, because area-level matches now score 0 and most random
+   addresses only ever had area-level reports.
+3. **One site carries a lot of it.** Ojota went 33.9 -> 56.4, promoted to street level when
+   the page check found our street name on the page.
+
+**The number that actually improved, and the one worth trusting:**
+
+| | any report | street-level report |
+| --- | --- | --- |
+| flood sites | 4/4 | **2/4** |
+| random baseline | 23/30 | **2/30** (was 5/30) |
+
+Checking the page against *our* reverse-geocoded street names rather than the model's
+wording rejected 3 of the 5 baseline street-level matches from Run 3. That is a real gain
+in selectivity, independent of the weights.
+
+**Lekki is now actively hurt by its pin.** Two genuine Lekki flood reports were *rejected*
+because the page named none of our place names: the reverse geocode returns `Ilado` and
+`Eti Osa` for that point, never "Lekki Phase 1". The page check is working exactly as
+designed and throwing away true positives, because the names it is given are wrong. A
+hand-placed pin fixes this; the coarse zoom-14 lookup did not (it also returns `Ilado`).
+
+**Isashi fell to 0 reports**, its estate-level matches demoted to area by the page check.
+
+Cost: 34 places, 22 from cache, 488 searches, **$0.74**.
+
+**A reporting bug found while reading this run.** The summary said "27 dropped", but that
+list mixed real rejections with "kept, but demoted" match-level corrections, overstating
+rejections roughly threefold. On the 12 places newly searched this run, 13 such lines split
+**4 rejections / 9 corrections**. `FloodHistory` now keeps `dropped` and `corrections`
+apart and the summary counts them separately.
+
+## Scoring is frozen as of Run 4
+
+No weight, ramp or match-level change without new, independent validation sites. See
+CLAUDE.md. Everything below is a measurement problem, not a weighting problem.
 
 ## Standing findings
 
@@ -134,9 +185,14 @@ See the table appended below once the run completes.
 - **No dry sites yet.** Every labelled site in the set is a flood site. A random built-up
   point is **not** a dry site: Lagos floods widely, so the negative class is contaminated
   and every AUC here understates performance by an unknown amount.
-- **Two weak pins.** `isashi_light_estate` is a rounded OSM village node (marked
-  `geocode_quality=approximate` and excluded from summaries); `lekki_phase_1` is a
-  neighbourhood centroid wider than the 2 km grid.
+- **Two weak pins, and they now cost real evidence.** `isashi_light_estate` is a rounded
+  OSM village node (marked `geocode_quality=approximate` and excluded from summaries);
+  `lekki_phase_1` is a neighbourhood centroid whose reverse geocode never yields "Lekki
+  Phase 1", so the page check rejects genuine Lekki flood reports. Hand-placed pins are now
+  the single cheapest improvement available.
+- **The Lagos bounding box is not Lagos.** 6.40-6.70 N reaches into Ogun State; baseline
+  points are now kept only if their reverse geocode says Lagos, and 5 of 35 draws were
+  rejected on that test.
 
 ## What would actually move this
 

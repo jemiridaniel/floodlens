@@ -272,11 +272,13 @@ def print_history(rows: list[Row], base: list[Row]) -> None:
           f"{searches} searches, est ${cost:.4f}")
 
     dropped = sum(len(h.dropped) for _, h in runs)
-    print(f"    {sum(len(h.reports) for _, h in runs)} reports kept, {dropped} dropped "
-          "(uncited url, unparseable date, or outside the window)")
+    corrected = sum(len(h.corrections) for _, h in runs)
+    print(f"    {sum(len(h.reports) for _, h in runs)} reports kept, {dropped} rejected "
+          f"(uncited url, unparseable date, out of window, or the page names none of our "
+          f"places), {corrected} kept with the match level corrected by the page")
     for _, h in runs:
         for d in h.dropped[:2]:
-            print(f"      dropped: {d[:110]}")
+            print(f"      rejected: {d[:108]}")
 
     def street_level(h) -> bool:
         return any(r.match_level.value == "street" for r in h.reports)

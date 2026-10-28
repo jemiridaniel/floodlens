@@ -406,7 +406,8 @@ def test_street_level_requires_our_street_on_the_page():
     h = run(FakeClient(turn([report(match_level="street")], cited_urls=[CITED])),
             http=FakeHttp({CITED: district_only}))
     assert h.reports[0].match_level == MatchLevel.area
-    assert any("demoted from street to area" in d for d in h.dropped)
+    assert h.dropped == []  # a demotion keeps the report: it is not a rejection
+    assert any("demoted from street to area" in c for c in h.corrections)
     assert H.history_metric(h).value == 0.0  # area matches score nothing
 
 
@@ -420,17 +421,18 @@ def test_an_area_claim_is_promoted_when_our_street_is_on_the_page():
 def test_street_names_match_across_abbreviations():
     page = Page("<html><body><p>James Kunle St was under water for two days.</p></body></html>")
     place = H.Place(street="James Kunle Street", estate=None, area=None, lga="Ojo")
-    kept, dropped = H.check_text(
+    kept, dropped, corrected = H.check_text(
         [H.FloodReport(place_named="James Kunle Street", match_level="street",
                        event_date="2026-06-28", publisher="P", url=CITED, quote="under water")],
         place, FakeHttp({CITED: page}))
-    assert kept and kept[0].match_level == MatchLevel.street and dropped == []
+    assert kept and kept[0].match_level == MatchLevel.street
+    assert dropped == [] and corrected == []
 
 
 def test_whole_word_matching_so_ojo_is_not_ojota():
     page = Page("<html><body><p>Ojota was flooded on Monday.</p></body></html>")
     place = H.Place(street=None, estate=None, area=None, lga="Ojo")
-    kept, dropped = H.check_text(
+    kept, dropped, _ = H.check_text(
         [H.FloodReport(place_named="Ojo", match_level="area", event_date="2026-06-28",
                        publisher="P", url=CITED, quote="flooded")],
         place, FakeHttp({CITED: page}))
@@ -490,3 +492,16 @@ def test_reports_four_days_apart_are_two_events():
     h = run(FakeClient(turn(rows, cited_urls=[CITED])), http=http)
     assert H.SAME_EVENT_DAYS == 3
     assert len(H.distinct_events(h.reports)) == 2
+
+
+def test_a_demotion_is_a_correction_not_a_rejection():
+    """These were being counted together, which overstated rejections nearly threefold."""
+    district_only = Page("<html><body><p>Flooding across Oshodi/Isolo on Monday.</p></body></html>")
+    h = run(FakeClient(turn([report(match_level="street")], cited_urls=[CITED])),
+            http=FakeHttp({CITED: district_only}))
+    assert len(h.reports) == 1 and h.dropped == []
+    assert len(h.corrections) == 1 and "demoted" in h.corrections[0]
+
+    nowhere = Page("<html><body><p>Flooding in Kano.</p></body></html>")
+    h2 = run(FakeClient(turn([report()], cited_urls=[CITED])), http=FakeHttp({CITED: nowhere}))
+    assert h2.reports == [] and len(h2.dropped) == 1 and h2.corrections == []

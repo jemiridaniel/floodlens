@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,10 @@ from app.geo.water import radar_water
 from app.pipeline import assess
 from app.schemas import AssessmentRequest
 from app.scoring import FEATURES
+
+# Batch script only: bound every socket so a stalled read cannot hang a run. Deliberately
+# NOT set in app/main.py, whose clients set their own timeouts.
+socket.setdefaulttimeout(60)
 
 
 def save_evidence(layers, out: Path) -> dict[str, bytes]:

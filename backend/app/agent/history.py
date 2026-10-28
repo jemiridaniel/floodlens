@@ -119,10 +119,20 @@ def _reverse(site: Site, zoom: int, c: httpx.Client) -> dict:
     return r.json()
 
 
+_PLACES: dict[tuple[float, float], Place] = {}  # per process: sampling and scoring ask twice
+
+
 def reverse_geocode(site: Site, client: httpx.Client | None = None) -> Place:
     """Two Nominatim lookups: zoom 18 for the street, and a coarser zoom 14 for the name
     locals and reporters actually use. Both run for every site, validation and baseline
-    alike, so the comparison stays fair."""
+    alike, so the comparison stays fair.
+
+    Memoised per process: the baseline sampler asks for the state and the scorer then asks
+    for the names, and Nominatim allows only one request a second.
+    """
+    memo = (round(site.lat, 6), round(site.lon, 6))
+    if memo in _PLACES:
+        return _PLACES[memo]
     c = client or httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30, follow_redirects=True)
     try:
         fine = _reverse(site, 18, c)
@@ -133,7 +143,7 @@ def reverse_geocode(site: Site, client: httpx.Client | None = None) -> Place:
     a = fine.get("address", {})
     ca = coarse.get("address", {})
     first = lambda d, *keys: next((d[k] for k in keys if d.get(k)), None)  # noqa: E731
-    return Place(
+    _PLACES[memo] = Place(
         street=first(a, "road", "pedestrian", "residential_road"),
         estate=first(a, "neighbourhood", "residential", "quarter", "hamlet"),
         area=first(a, "suburb", "city_district", "town", "village"),
@@ -141,6 +151,7 @@ def reverse_geocode(site: Site, client: httpx.Client | None = None) -> Place:
         state=first(a, "state") or "Lagos",
         neighbourhood=coarse.get("name") or first(ca, "suburb", "neighbourhood", "town"),
     )
+    return _PLACES[memo]
 
 
 REPORT_SCHEMA: dict[str, Any] = {

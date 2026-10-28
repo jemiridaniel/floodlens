@@ -195,12 +195,21 @@ def test_built_up_test_skips_open_water_and_no_data():
     assert v.is_built_up(partial, g) == (True, 1.0)
 
 
-def test_sampling_is_deterministic_for_a_seed(monkeypatch):
+def _lagos(v, monkeypatch, state="Lagos"):
+    """Stub the network out of the sampler: land cover and the state lookup."""
     import numpy as np
-    v = _validate()
+
+    from app.agent.history import Place
     monkeypatch.setattr(v, "_catalog", lambda: object())
     monkeypatch.setattr(v, "landcover",
                         lambda c, site, grid: (np.full((grid.side, grid.side), 50, "float32"), "lc"))
+    monkeypatch.setattr(v, "reverse_geocode",
+                        lambda site: Place(street=None, estate=None, area=None, lga="X", state=state))
+
+
+def test_sampling_is_deterministic_for_a_seed(monkeypatch):
+    v = _validate()
+    _lagos(v, monkeypatch)
     first = v.sample_built_up(5)
     assert len(first) == 5
     assert v.sample_built_up(5) == first
@@ -236,3 +245,120 @@ def _capture(fn, *args):
     with contextlib.redirect_stdout(buf):
         fn(*args)
     return buf.getvalue()
+
+
+# ------------------------------------------------- the per-site time limit
+def test_time_limit_interrupts_a_blocking_call():
+    """A thread-based timeout cannot stop a blocked socket read. SIGALRM can."""
+    import time
+    v = _validate()
+    t0 = time.monotonic()
+    with pytest.raises(v.SiteTimeout), v.time_limit(1):
+        time.sleep(30)
+    assert time.monotonic() - t0 < 5
+
+
+def test_time_limit_clears_itself_when_the_work_finishes():
+    """A leftover timer would fire during the next site."""
+    import signal
+    import time
+    v = _validate()
+    with v.time_limit(5):
+        pass
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    time.sleep(0.05)  # nothing should be raised afterwards
+
+
+def test_a_site_over_the_limit_is_recorded_as_failed_and_the_run_goes_on(monkeypatch):
+    import time
+    v = _validate()
+    monkeypatch.setattr(v, "assess", lambda *a, **kw: time.sleep(30))
+    row = v.run_site({"site_id": "stuck", "label": "Stuck site", "expected": "flood",
+                      "lat": "6.5", "lon": "3.3", "wet_date": ""}, limit=1)
+    assert row.score is None and row.tier == ""
+    assert "timed out" in row.error and "1s" in row.error
+
+    monkeypatch.setattr(v, "assess", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+    other = v.run_site({"site_id": "bad", "label": "Bad site", "expected": "flood",
+                        "lat": "6.5", "lon": "3.3", "wet_date": ""}, limit=5)
+    assert "RuntimeError: boom" in other.error  # ordinary failures still reported separately
+
+
+def test_failed_sites_are_named_in_the_table():
+    v = _validate()
+    rows = [v.Row(site_id="a", label="Fine", expected="flood", score=40.0, tier="Moderate",
+                  values={m: "1" for m in v.SCORED}),
+            v.Row(site_id="b", label="Stuck site", expected="flood", error="timed out: exceeded 300s")]
+    out = _capture(v.print_table, rows)
+    assert "Stuck site" in out and "was not scored" in out and "timed out" in out
+
+
+# ------------------------------------------------- the Lagos state filter
+def test_points_outside_lagos_state_are_rejected(monkeypatch):
+    """The bounding box reaches into Ogun State; the box cannot be trusted alone."""
+    v = _validate()
+    _lagos(v, monkeypatch, state="Ogun")
+    assert v.sample_built_up(3) == []
+
+
+def test_only_lagos_points_are_kept_and_the_rest_counted(monkeypatch, capsys):
+    import numpy as np
+
+    from app.agent.history import Place
+    v = _validate()
+    calls = []
+
+    def every_other_one_is_ogun(site):
+        calls.append(site)
+        return Place(street=None, estate=None, area=None, lga="X",
+                     state="Lagos" if len(calls) % 2 == 0 else "Ogun")
+
+    monkeypatch.setattr(v, "_catalog", lambda: object())
+    monkeypatch.setattr(v, "landcover",
+                        lambda c, site, grid: (np.full((grid.side, grid.side), 50, "float32"), "lc"))
+    monkeypatch.setattr(v, "reverse_geocode", every_other_one_is_ogun)
+
+    points = v.sample_built_up(4)
+    assert len(points) == 4
+    assert "rejected for not being in Lagos State" in capsys.readouterr().out
+
+
+def test_a_failed_state_lookup_rejects_the_point(monkeypatch):
+    """Unknown location is not the same as Lagos."""
+    import numpy as np
+    v = _validate()
+    monkeypatch.setattr(v, "_catalog", lambda: object())
+    monkeypatch.setattr(v, "landcover",
+                        lambda c, site, grid: (np.full((grid.side, grid.side), 50, "float32"), "lc"))
+    monkeypatch.setattr(v, "reverse_geocode",
+                        lambda site: (_ for _ in ()).throw(RuntimeError("nominatim down")))
+    assert v.sample_built_up(2) == []
+
+
+# ------------------------------------------------- the timeout backstops
+def test_batch_scripts_bound_sockets_but_the_api_does_not():
+    """A global socket timeout is right for a batch run and wrong for the API, whose
+    clients set their own and may hold long-lived streaming connections."""
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    for name in ("validate.py", "assess_site.py"):
+        assert "socket.setdefaulttimeout(60)" in (scripts / name).read_text(), name
+    api = Path(__file__).resolve().parents[1] / "app" / "main.py"
+    assert "setdefaulttimeout" not in api.read_text()
+
+
+def test_the_stac_client_and_requests_are_bounded(monkeypatch):
+    import requests
+
+    from app.geo import sources
+    assert sources.STAC_TIMEOUT_S > 0 and sources.STAC_RETRIES >= 1
+
+    seen: dict = {}
+    monkeypatch.setattr(requests.Session, "request",
+                        lambda self, method, url, **kw: seen.update(kw) or "ok")
+    sources.bound_requests_timeout(7)  # planetary_computer passes no timeout of its own
+    requests.Session().request("GET", "https://example.invalid")
+    assert seen["timeout"] == 7
+
+    seen.clear()
+    requests.Session().request("GET", "https://example.invalid", timeout=3)
+    assert seen["timeout"] == 3  # an explicit timeout is left alone

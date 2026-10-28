@@ -11,7 +11,10 @@ wettest rainfall day we can find.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import signal
+import socket
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,12 +22,18 @@ from pathlib import Path
 import numpy as np
 
 from app.agent.history import lookup as flood_history_lookup
+from app.agent.history import reverse_geocode
 from app.geo.aoi import Grid, Site, distance_m, ring_mask
 from app.geo.sources import PlanetaryComputerSource, _catalog, landcover
 from app.geo.water import share_within
 from app.pipeline import assess
 from app.schemas import AssessmentRequest
 from app.scoring import FEATURES
+
+# Batch scripts only. A stalled socket must not hold up a 34-site run, and nothing here
+# holds a long-lived streaming connection. Deliberately NOT set in app/main.py, where the
+# API's clients set their own timeouts and a global default would cut them short.
+socket.setdefaulttimeout(60)
 
 SITES_CSV = Path(__file__).resolve().parents[2] / "data" / "validation_sites.csv"
 
@@ -34,6 +43,8 @@ LAGOS_BBOX = (6.40, 6.70, 3.10, 3.60)  # lat_min, lat_max, lon_min, lon_max
 BASELINE_SEED = 20261027  # fixed, so the baseline is the same set every run
 PROBE = Grid(size_m=500, res_m=10)  # just wide enough for the 250 m built-up test
 BUILT_UP_MIN = 0.50
+SITE_TIME_LIMIT_S = 300  # one stuck site is recorded as failed; the run moves on
+BASELINE_STATE = "lagos"  # the bounding box overlaps Ogun, so the state is checked
 MIN_FROM_VALIDATION_M = 1000  # a baseline point next door to a flood site is not independent
 WORLDCOVER_BUILT_UP, WORLDCOVER_WATER = 50, 80
 SCORED = [f.metric_id for f in FEATURES]  # the five metrics the score is built from
@@ -51,6 +62,30 @@ HEADS = {
 
 
 HISTORY: dict[str, object] = {}  # site_id -> FloodHistory, for the cost and circularity report
+
+
+class SiteTimeout(Exception):
+    """A site took longer than the limit and was abandoned."""
+
+
+@contextlib.contextmanager
+def time_limit(seconds: int):
+    """Abandon the block after `seconds`. SIGALRM interrupts a blocking read, which a
+    thread-based timeout cannot. No-op where SIGALRM does not exist."""
+    if not hasattr(signal, "SIGALRM") or seconds <= 0:
+        yield
+        return
+
+    def ring(_signum, _frame):
+        raise SiteTimeout(f"exceeded the {seconds}s limit for one site")
+
+    previous = signal.signal(signal.SIGALRM, ring)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 @dataclass
@@ -79,7 +114,7 @@ def degraded(row: Row) -> bool:
     return any(m in row.missing for m in ("m_water_history_500", "m_built_up_500", "m_local_low_spot"))
 
 
-def run_site(site: dict[str, str], history: bool = False) -> Row:
+def run_site(site: dict[str, str], history: bool = False, limit: int = SITE_TIME_LIMIT_S) -> Row:
     row = Row(site_id=site["site_id"], label=site["label"], expected=site["expected"],
               quality=site.get("geocode_quality") or "ok")
     req = AssessmentRequest(lat=float(site["lat"]), lon=float(site["lon"]), label=site["label"],
@@ -91,7 +126,12 @@ def run_site(site: dict[str, str], history: bool = False) -> Row:
         return got
 
     try:
-        result = assess(req, PlanetaryComputerSource(), flood_history=remember if history else None)
+        with time_limit(limit):
+            result = assess(req, PlanetaryComputerSource(),
+                            flood_history=remember if history else None)
+    except SiteTimeout as exc:
+        row.error = f"timed out: {exc}"
+        return row
     except Exception as exc:  # one bad site must not lose the whole run
         row.error = f"{exc.__class__.__name__}: {exc}"
         return row
@@ -129,6 +169,7 @@ def sample_built_up(n: int, seed: int = BASELINE_SEED,
     lat0, lat1, lon0, lon1 = LAGOS_BBOX
     picked: list[tuple[float, float, float]] = []
     near = 0
+    outside = 0
     tries = 0
     while len(picked) < n and tries < 30 * n:
         tries += 1
@@ -143,12 +184,23 @@ def sample_built_up(n: int, seed: int = BASELINE_SEED,
         if got is None:
             continue
         ok, share = is_built_up(got[0], PROBE)
-        if ok:
-            picked.append((lat, lon, 100 * share))
+        if not ok:
+            continue
+        # The bounding box reaches north into Ogun State, so ask where this actually is.
+        try:
+            state = (reverse_geocode(Site(lat, lon)).state or "").casefold()
+        except Exception:
+            outside += 1
+            continue
+        if BASELINE_STATE not in state:
+            outside += 1
+            continue
+        picked.append((lat, lon, 100 * share))
     print(f"    {len(picked)} points from {tries} draws "
           f"({100 * len(picked) / max(tries, 1):.0f}% of the box is built-up land)"
           + (f", {near} resampled for being within {MIN_FROM_VALIDATION_M} m of a validation site"
-             if near else ""))
+             if near else "")
+          + (f", {outside} rejected for not being in Lagos State" if outside else ""))
     return picked
 
 
@@ -258,6 +310,9 @@ def print_table(rows: list[Row]) -> None:
 
     for r in (r for r in rows if r.quality == "approximate"):
         print(f"  ~ {r.label} is left out of the summary until it has a real pin")
+    failed = [r for r in rows if r.error]
+    for r in failed:
+        print(f"  ! {r.label[:40]} was not scored: {r.error[:70]}")
     hurt = [r for r in rows if r.score is not None and degraded(r)]
     for r in hurt:
         print(f"  ! {r.label[:40]} lost a layer this run ({r.missing}): its score is rescaled "

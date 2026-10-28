@@ -17,6 +17,35 @@ from .water import clear_mask
 
 GRID = Grid(size_m=2000, res_m=10)  # 200 x 200 px at Sentinel-2 native resolution
 
+# Nothing here may block forever. GDAL covers the raster reads (geo/raster.py), but the
+# STAC searches and Planetary Computer's SAS signing go through requests, which has no
+# default timeout at all: planetary_computer calls session.get(url, headers=...) with none,
+# so one stalled token request hung a whole validation run for an hour at 0% CPU.
+STAC_TIMEOUT_S = 30
+STAC_RETRIES = 2
+REQUESTS_TIMEOUT_S = 30
+
+
+def bound_requests_timeout(seconds: float = REQUESTS_TIMEOUT_S) -> None:
+    """Give every requests call a default timeout, once, process-wide.
+
+    This is the only way to bound planetary_computer's signing call: it builds its own
+    Session per call and passes no timeout, so there is nothing to configure. Callers that
+    set their own timeout keep it.
+    """
+    import requests
+
+    if getattr(requests.Session.request, "_floodlens_bounded", False):
+        return
+    original = requests.Session.request
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", seconds)
+        return original(self, method, url, **kwargs)
+
+    request._floodlens_bounded = True
+    requests.Session.request = request
+
 
 @dataclass
 class Optical:
@@ -58,8 +87,14 @@ class LayerSource(Protocol):
 def _catalog():
     import planetary_computer
     import pystac_client
+    from pystac_client.stac_api_io import StacApiIO
 
-    return pystac_client.Client.open(STAC_URL, modifier=planetary_computer.sign_inplace)
+    bound_requests_timeout()  # covers planetary_computer's SAS signing call
+    # max_retries rides on the StacApiIO; the timeout must go to Client.open, which
+    # otherwise overwrites stac_io.timeout with its own default of None.
+    stac_io = StacApiIO(max_retries=STAC_RETRIES)
+    return pystac_client.Client.open(STAC_URL, modifier=planetary_computer.sign_inplace,
+                                     stac_io=stac_io, timeout=STAC_TIMEOUT_S)
 
 
 def _search(catalog, collection: str, site: Site, dates: str | None = None, query: dict | None = None):

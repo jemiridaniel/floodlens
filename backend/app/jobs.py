@@ -15,6 +15,8 @@ caps confidence at low, exactly as in the batch path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import time
@@ -278,8 +280,12 @@ async def _flood_history(job: Job, site: Site, history_lookup: Any):
         job.cost_usd += getattr(history, "cost_usd", 0.0)
         kept = len(history.reports)
         street = sum(1 for r in history.reports if r.match_level == "street")
-        job.step(HISTORY, "done", _ms(t0),
-                 f"{kept} report(s) kept, {street} street-level, {len(history.dropped)} rejected")
+        detail = f"{kept} report(s) kept, {street} street-level, {len(history.dropped)} rejected"
+        if getattr(history, "from_cache", False):
+            detail += " (already searched for this street)"
+        if getattr(history, "stopped_early", False):
+            detail += " - search stopped at the time limit, so this is partial"
+        job.step(HISTORY, "done", _ms(t0), detail)
         return history
     except Exception as exc:
         # No history is not "no floods": the metric is dropped and confidence is capped.
@@ -394,11 +400,31 @@ def demo_key(lat: float, lon: float) -> str:
     return f"{lat:.4f}_{lon:.4f}"
 
 
+def scoring_fingerprint() -> str:
+    """Identifies the scoring rules a cached result was produced under.
+
+    A demo must never replay a verdict the current code would not produce. The Okota entry
+    was recorded before the street-level tier floor existed and kept replaying Moderate
+    after the rule would have made it High, which is exactly the kind of quiet staleness
+    that makes a cached demo a lie. Change a weight, a ramp, a tier cut or the floor and
+    this changes, so the entry is ignored and re-run.
+    """
+    from .scoring import FEATURES, GROUPS, TIER_CUTS, TIER_FLOOR, TIER_FLOOR_STREET_EVENTS
+    raw = json.dumps({
+        "features": [[f.metric_id, f.weight, f.zero_at, f.full_at] for f in FEATURES],
+        "groups": {k: list(v) for k, v in GROUPS.items()},
+        "cuts": [[c, t.value] for c, t in TIER_CUTS],
+        "floor": [TIER_FLOOR_STREET_EVENTS, TIER_FLOOR.value],
+    }, sort_keys=True)
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
 def save_demo(job: Job, rendered: AssessmentView, root: Path | None = None) -> None:
     root = DEMO_CACHE if root is None else root
     folder = root / demo_key(job.lat, job.lon)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "view.json").write_text(rendered.model_dump_json(indent=2))
+    (folder / "scoring.txt").write_text(scoring_fingerprint())
     for name, png in job.pngs.items():
         (folder / f"{name}.png").write_bytes(png)
 
@@ -408,7 +434,11 @@ def load_demo(lat: float, lon: float, root: Path | None = None
     root = DEMO_CACHE if root is None else root
     folder = root / demo_key(lat, lon)
     saved = folder / "view.json"
+    stamp = folder / "scoring.txt"
     if not saved.exists():
+        return None
+    if not stamp.exists() or stamp.read_text().strip() != scoring_fingerprint():
+        log.info("demo copy for %s predates the current scoring rules: re-running", folder.name)
         return None
     rendered = AssessmentView.model_validate_json(saved.read_text())
     pngs = {p.stem: p.read_bytes() for p in folder.glob("*.png")}

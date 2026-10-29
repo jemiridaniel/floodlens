@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type FormEvent, useRef, useState } from "react";
 import { createAssessment } from "@/lib/api";
 import { SiteMap } from "@/components/SiteMap";
 import { Button, Card, Field, Label, Mono, coords, inputClass } from "@/components/ui";
@@ -11,13 +11,23 @@ const MAX_PHOTOS = 5;
 
 export function AssessmentForm() {
   const router = useRouter();
-  const [pin, setPin] = useState(LAGOS);
+  const params = useSearchParams();
+  // ?lat=&lon= makes a pin shareable, and is how the screenshot run places it.
+  const fromUrl = {
+    lat: Number(params.get("lat")),
+    lon: Number(params.get("lon")),
+  };
+  const [pin, setPin] = useState(
+    Number.isFinite(fromUrl.lat) && Number.isFinite(fromUrl.lon) && fromUrl.lat && fromUrl.lon
+      ? { lat: fromUrl.lat, lon: fromUrl.lon }
+      : LAGOS,
+  );
   const [photos, setPhotos] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);

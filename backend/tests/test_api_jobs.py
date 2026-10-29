@@ -337,3 +337,29 @@ def test_two_street_events_raise_the_tier_through_the_api(api):
     from app.scoring import apply_tier_floor
     raised, why = apply_tier_floor(Tier.low, a["street_flood_events"])
     assert raised == Tier.high and "street-level" in why
+
+
+def test_a_demo_copy_from_older_scoring_rules_is_ignored(api, tmp_path, monkeypatch):
+    """A cached demo must never replay a verdict the current code would not produce."""
+    monkeypatch.setenv("FLOODLENS_DEMO_CACHE", "1")
+    monkeypatch.setattr(J, "DEMO_CACHE", tmp_path / "demo")
+
+    drain(api, start(api))
+    folder = next((tmp_path / "demo").iterdir())
+    assert (folder / "scoring.txt").read_text() == J.scoring_fingerprint()
+    assert J.load_demo(6.5026, 3.3052, tmp_path / "demo") is not None
+
+    (folder / "scoring.txt").write_text("weights-from-last-week")
+    assert J.load_demo(6.5026, 3.3052, tmp_path / "demo") is None  # stale: re-run instead
+
+    folder_without_stamp = tmp_path / "demo" / "9.9999_9.9999"
+    folder_without_stamp.mkdir()
+    (folder_without_stamp / "view.json").write_text("{}")
+    assert J.load_demo(9.9999, 9.9999, tmp_path / "demo") is None
+
+
+def test_the_fingerprint_moves_with_the_scoring_rules(monkeypatch):
+    from app import scoring
+    before = J.scoring_fingerprint()
+    monkeypatch.setattr(scoring, "TIER_FLOOR_STREET_EVENTS", 3)
+    assert J.scoring_fingerprint() != before

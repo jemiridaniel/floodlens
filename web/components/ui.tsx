@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import type { Tier } from "@/lib/types";
 
 const TIER_STYLE: Record<Tier, string> = {
@@ -30,7 +30,7 @@ export function Card({
   children: ReactNode;
   className?: string;
   as?: "section" | "div" | "article";
-} & React.HTMLAttributes<HTMLElement>) {
+} & HTMLAttributes<HTMLElement>) {
   return (
     <Tag
       className={`rounded-[12px] border border-line bg-card p-4 sm:p-5 ${className}`}
@@ -60,7 +60,7 @@ export function Button({
   children: ReactNode;
   variant?: "primary" | "secondary";
   className?: string;
-} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
   const base =
     "inline-flex items-center justify-center gap-2 rounded-[10px] px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50";
   const look =

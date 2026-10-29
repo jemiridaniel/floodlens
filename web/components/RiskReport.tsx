@@ -47,6 +47,11 @@ const EVIDENCE_CAPTION: Record<string, string> = {
   water_wet: "Radar water on the wettest recent date",
 };
 
+/** The three water views are masks: white is water, black is none. On a dry inland site
+ *  they are legitimately almost entirely black, which reads as a broken image unless the
+ *  caption says what black means. */
+const MASK_VIEWS = new Set(["water_now", "water_history", "water_wet"]);
+
 function Metrics({ group }: { group: GroupView }) {
   if (!group.present)
     return <p className="text-sm text-muted">Not measured for this site.</p>;
@@ -152,7 +157,7 @@ export function RiskReport({ view }: { view: AssessmentView }) {
           {view.groups.map((group) => (
             <div key={group.name}>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-sm font-semibold capitalize">{group.name}</h3>
+                <h3 className="text-sm font-semibold first-letter:uppercase">{group.name}</h3>
                 {!group.present && (
                   <span className="rounded-full bg-high-bg px-2.5 py-0.5 text-xs font-semibold text-high-ink">
                     missing
@@ -247,7 +252,10 @@ export function RiskReport({ view }: { view: AssessmentView }) {
               <figure key={name}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={url} alt={EVIDENCE_CAPTION[name]} className="w-full rounded-[12px] border border-line" />
-                <figcaption className="mt-1.5 text-xs text-muted">{EVIDENCE_CAPTION[name]}</figcaption>
+                <figcaption className="mt-1.5 text-xs text-muted">
+                  {EVIDENCE_CAPTION[name]}
+                  {MASK_VIEWS.has(name) ? " · white is water, black is none" : ""}
+                </figcaption>
               </figure>
             ))}
         </div>

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FloodLens: risk report</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F5F6F4}
+a{color:#1D5FA8}a:hover{color:#123E70}
+</style>
+
+</head>
+<body>
+
+<div style="min-height: 1320px; background: #F5F6F4; color: #0F1E2D; font-family: 'IBM Plex Sans', system-ui, sans-serif">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 32px; background: #FFFFFF; border-bottom: 1px solid #D9DEE3">
+    <a href="01-new-assessment.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #0F1E2D">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#1D5FA8" stroke-width="2.2"></circle><path d="M6 13c2-2 4-2 6 0s4 2 6 0" fill="none" stroke="#1D5FA8" stroke-width="2.2" stroke-linecap="round"></path><path d="M19 19l6 6" stroke="#0F1E2D" stroke-width="2.4" stroke-linecap="round"></path></svg>
+      <span style="font-size: 19px; font-weight: 700; letter-spacing: -0.2px">FloodLens</span>
+    </a>
+    <nav aria-label="Main" style="display: flex; flex-wrap: wrap; gap: 4px">
+      <a href="01-new-assessment.html" style="padding: 10px 14px; border-radius: 8px; color: #4D5B69; font-weight: 500; font-size: 15px; text-decoration: none">New assessment</a>
+      <a href="04-portfolio.html" style="padding: 10px 14px; border-radius: 8px; color: #4D5B69; font-weight: 500; font-size: 15px; text-decoration: none">Portfolio</a>
+      <a href="03-risk-report.html" style="padding: 10px 14px; border-radius: 8px; background: #E8F0F9; color: #123E70; font-weight: 600; font-size: 15px; text-decoration: none">Reports</a>
+    </nav>
+    <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: #4D5B69">
+      <span>Loan desk, Lagos</span>
+      <span style="width: 34px; height: 34px; border-radius: 17px; background: #0F1E2D; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px">LO</span>
+    </div>
+  </header>
+
+  <main style="max-width: 1280px; margin: 0 auto; padding: 36px 32px 56px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <a href="01-new-assessment.html" style="font-size: 14px; font-weight: 500; text-decoration: none">← New assessment</a>
+        <h1 style="margin: 0; font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.4px">[Site name], [Area]</h1>
+        <span style="font-size: 14px; color: #4D5B69"><span style="font-family: 'IBM Plex Mono', monospace">6.4541° N, 3.3947° E</span> · Assessed [date] · Report [ID]</span>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap">
+        <button type="button" style="display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 16px; border-radius: 10px; border: 1px solid #B8C2CC; background: #FFFFFF; color: #0F1E2D; font-size: 15px; font-weight: 500; font-family: inherit; cursor: pointer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"></path></svg>
+          Share
+        </button>
+        <button type="button" style="display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 18px; border-radius: 10px; border: 0; background: #1D5FA8; color: #FFFFFF; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>
+          Download PDF
+        </button>
+      </div>
+    </div>
+
+    <section aria-label="Verdict" style="display: flex; flex-wrap: wrap; gap: 24px; align-items: stretch">
+      <div style="flex: 1 1 300px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
+        <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #4D5B69">Flood risk</span>
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+          <span style="padding: 10px 20px; border-radius: 10px; font-size: 32px; font-weight: 700; letter-spacing: -0.4px; background: #FCE4D6; color: #9A3B0B">High</span>
+          <div style="display: flex; flex-direction: column">
+            <span style="font-size: 28px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[score]<span style="font-size: 16px; color: #4D5B69">/100</span></span>
+            <span style="font-size: 13px; color: #4D5B69">Confidence: [medium]</span>
+          </div>
+        </div>
+        <div role="img" aria-label="Score scale from Low to Severe" style="display: flex; gap: 4px">
+          <span style="flex: 25; height: 8px; border-radius: 4px; background: #9CCFB9"></span>
+          <span style="flex: 25; height: 8px; border-radius: 4px; background: #F0C977"></span>
+          <span style="flex: 25; height: 8px; border-radius: 4px; background: #F0A47A"></span>
+          <span style="flex: 25; height: 8px; border-radius: 4px; background: #B83A3A"></span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #4D5B69"><span>Low &lt;25</span><span>Moderate</span><span>High</span><span>Severe ≥75</span></div>
+      </div>
+
+      <div style="flex: 2 1 440px; background: #0F1E2D; color: #FFFFFF; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box">
+        <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #B8C2CC">Recommended action</span>
+        <span style="font-size: 26px; font-weight: 700; line-height: 1.25">Approve with flood insurance</span>
+        <p style="margin: 0; font-size: 15px; line-height: 1.55; color: #D9DEE3">Require flood cover on the collateral, or shorten the tenor so the loan clears before the next peak rainy season.</p>
+        <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid #2A3A4A; font-size: 14px; color: #7FD1A9">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path><path d="M8.5 12l2.5 2.5 4.5-5"></path></svg>
+          Verified: every number below matches a measured value
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Risk drivers" style="background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 24px; box-sizing: border-box">
+      <h2 style="margin: 0 0 4px; font-size: 19px; font-weight: 600">What drives this score</h2>
+      <p style="margin: 0 0 16px; font-size: 14px; color: #4D5B69">Each driver is measured from imagery or data; Muse Spark explains what it means for this loan.</p>
+      <div style="display: flex; flex-direction: column">
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 0; border-top: 1px solid #EDF0F2">
+          <span style="flex: 1 1 260px; font-size: 15px; font-weight: 600">Area flooded on wet dates, 250 m ring</span>
+          <span style="flex: 0 0 120px; font-size: 18px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[x]%</span>
+          <span style="flex: 2 1 360px; font-size: 14px; line-height: 1.5; color: #4D5B69">[Explanation: what the radar showed around the site on the wettest days.]</span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 0; border-top: 1px solid #EDF0F2">
+          <span style="flex: 1 1 260px; font-size: 15px; font-weight: 600">Years with standing water nearby</span>
+          <span style="flex: 0 0 120px; font-size: 18px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[x]%</span>
+          <span style="flex: 2 1 360px; font-size: 14px; line-height: 1.5; color: #4D5B69">[Explanation from JRC water history since 1984.]</span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 0; border-top: 1px solid #EDF0F2">
+          <span style="flex: 1 1 260px; font-size: 15px; font-weight: 600">Height above nearest water</span>
+          <span style="flex: 0 0 120px; font-size: 18px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[x] m</span>
+          <span style="flex: 2 1 360px; font-size: 14px; line-height: 1.5; color: #4D5B69">[Explanation from the Copernicus elevation model.]</span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 0; border-top: 1px solid #EDF0F2">
+          <span style="flex: 1 1 260px; font-size: 15px; font-weight: 600">Distance to nearest channel</span>
+          <span style="flex: 0 0 120px; font-size: 18px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[x] m</span>
+          <span style="flex: 2 1 360px; font-size: 14px; line-height: 1.5; color: #4D5B69">[Explanation from the SAM water mask.]</span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 0; border-top: 1px solid #EDF0F2">
+          <span style="flex: 1 1 260px; font-size: 15px; font-weight: 600">Heaviest daily rainfall, last 5 years</span>
+          <span style="flex: 0 0 120px; font-size: 18px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[x] mm</span>
+          <span style="flex: 2 1 360px; font-size: 14px; line-height: 1.5; color: #4D5B69">[Explanation from Open-Meteo rainfall history.]</span>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Evidence" style="display: flex; flex-wrap: wrap; gap: 24px">
+      <figure style="flex: 1 1 360px; margin: 0; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; overflow: hidden">
+        <svg viewBox="0 0 400 260" width="100%" role="img" aria-label="Dry-season optical image with building masks and the 250 m ring">
+          <rect width="400" height="260" fill="#2E3A2F"></rect>
+          <path d="M0 190 C80 170 150 210 220 190 S330 150 400 170 L400 260 L0 260 Z" fill="#2B4D63"></path>
+          <g fill="#F2A33A" fill-opacity="0.55" stroke="#F2A33A" stroke-width="1">
+            <rect x="140" y="86" width="24" height="18"></rect><rect x="170" y="82" width="20" height="22"></rect><rect x="198" y="90" width="28" height="16"></rect><rect x="232" y="84" width="18" height="20"></rect>
+            <rect x="140" y="114" width="20" height="20"></rect><rect x="166" y="118" width="30" height="16"></rect><rect x="204" y="114" width="22" height="22"></rect><rect x="234" y="118" width="26" height="18"></rect>
+          </g>
+          <circle cx="200" cy="120" r="56" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-dasharray="5 5"></circle>
+        </svg>
+        <figcaption style="padding: 12px 16px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap"><span style="font-weight: 600">Dry season · Sentinel-2</span><span style="color: #4D5B69">[date]</span></figcaption>
+      </figure>
+      <figure style="flex: 1 1 360px; margin: 0; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; overflow: hidden">
+        <svg viewBox="0 0 400 260" width="100%" role="img" aria-label="Wettest-date radar image with flooded-area mask and the 250 m ring">
+          <rect width="400" height="260" fill="#5B6168"></rect>
+          <path d="M0 180 C80 160 150 200 220 180 S330 140 400 160 L400 260 L0 260 Z" fill="#1E2328"></path>
+          <path d="M110 140 C140 110 190 130 210 140 S270 110 300 140 C310 160 270 180 230 170 S150 190 120 170 Z" fill="#3FA9F5" fill-opacity="0.55" stroke="#7CC6FA" stroke-width="1.5"></path>
+          <path d="M0 180 C80 160 150 200 220 180 S330 140 400 160 L400 260 L0 260 Z" fill="#3FA9F5" fill-opacity="0.35"></path>
+          <circle cx="200" cy="120" r="56" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-dasharray="5 5"></circle>
+        </svg>
+        <figcaption style="padding: 12px 16px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap"><span style="font-weight: 600">Wettest date · Sentinel-1 radar</span><span style="color: #4D5B69">[date]</span></figcaption>
+      </figure>
+    </section>
+
+    <section aria-label="Local flood history" style="background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px">
+      <div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <h2 style="margin: 0; font-size: 19px; font-weight: 600">Reported flooding nearby</h2>
+          <p style="margin: 0; font-size: 14px; color: #4D5B69">News reports from the last 5 years. Each one was opened and checked for the place name.</p>
+        </div>
+        <span style="font-size: 14px; font-weight: 600">[n] events · [n] on this street</span>
+      </div>
+      <div style="display: flex; flex-direction: column">
+        <a href="#" style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 14px 0; border-top: 1px solid #EDF0F2; color: #0F1E2D; text-decoration: none">
+          <span style="flex: 0 0 110px; font-size: 14px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[YYYY-MM-DD]</span>
+          <span style="flex: 0 0 auto; align-self: flex-start; padding: 2px 8px; border-radius: 999px; background: #FCE4D6; color: #9A3B0B; font-size: 12px; font-weight: 600">This street</span>
+          <span style="flex: 1 1 360px; font-size: 14px; line-height: 1.5">“[Short quote from the report naming the street]” <span style="color: #1D5FA8; font-weight: 500">[Publisher] ↗</span></span>
+        </a>
+        <a href="#" style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 14px 0; border-top: 1px solid #EDF0F2; color: #0F1E2D; text-decoration: none">
+          <span style="flex: 0 0 110px; font-size: 14px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[YYYY-MM-DD]</span>
+          <span style="flex: 0 0 auto; align-self: flex-start; padding: 2px 8px; border-radius: 999px; background: #FBEFD5; color: #7A4F00; font-size: 12px; font-weight: 600">This estate</span>
+          <span style="flex: 1 1 360px; font-size: 14px; line-height: 1.5">“[Short quote from the report]” <span style="color: #1D5FA8; font-weight: 500">[Publisher] ↗</span></span>
+        </a>
+        <a href="#" style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 14px 0; border-top: 1px solid #EDF0F2; color: #0F1E2D; text-decoration: none">
+          <span style="flex: 0 0 110px; font-size: 14px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[YYYY-MM-DD]</span>
+          <span style="flex: 0 0 auto; align-self: flex-start; padding: 2px 8px; border-radius: 999px; background: #EDF0F2; color: #4D5B69; font-size: 12px; font-weight: 600">Wider area</span>
+          <span style="flex: 1 1 360px; font-size: 14px; line-height: 1.5">“[Short quote from the report]” <span style="color: #1D5FA8; font-weight: 500">[Publisher] ↗</span></span>
+        </a>
+      </div>
+    </section>
+
+    <section aria-label="Site photos" style="background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 style="margin: 0; font-size: 19px; font-weight: 600">On the ground</h2>
+        <p style="margin: 0; font-size: 14px; color: #4D5B69">SAM 3.1 marks what satellites cannot see from the officer's photos.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+        <figure style="margin: 0; border: 1px solid #D9DEE3; border-radius: 10px; overflow: hidden">
+          <div style="aspect-ratio: 4 / 3; background: #C9D1D8; position: relative"><div style="position: absolute; left: 18%; right: 18%; bottom: 10%; height: 16%; background: rgba(63,169,245,0.55); border: 2px solid #3FA9F5; border-radius: 4px"></div></div>
+          <figcaption style="padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 600">Door step</span><span style="font-size: 13px; color: #4D5B69">SAM: water stain, [x] cm above step</span></figcaption>
+        </figure>
+        <figure style="margin: 0; border: 1px solid #D9DEE3; border-radius: 10px; overflow: hidden">
+          <div style="aspect-ratio: 4 / 3; background: #C9D1D8; position: relative"><div style="position: absolute; left: 8%; right: 8%; top: 62%; height: 14%; background: rgba(242,163,58,0.55); border: 2px solid #F2A33A; border-radius: 4px"></div></div>
+          <figcaption style="padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 600">Street drain</span><span style="font-size: 13px; color: #4D5B69">SAM: drain, [open / blocked]</span></figcaption>
+        </figure>
+        <figure style="margin: 0; border: 1px solid #D9DEE3; border-radius: 10px; overflow: hidden">
+          <div style="aspect-ratio: 4 / 3; background: #C9D1D8"></div>
+          <figcaption style="padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 14px; font-weight: 600">Front of building</span><span style="font-size: 13px; color: #4D5B69">No water marks found</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section aria-label="Caveats and site note" style="display: flex; flex-wrap: wrap; gap: 24px">
+      <div style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 20px 24px; box-sizing: border-box">
+        <h2 style="margin: 0 0 10px; font-size: 16px; font-weight: 600">Officer's site note</h2>
+        <p style="margin: 0; font-size: 15px; line-height: 1.55; color: #4D5B69">[Transcribed voice note or typed note from the site visit.]</p>
+      </div>
+      <div style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 20px 24px; box-sizing: border-box">
+        <h2 style="margin: 0 0 10px; font-size: 16px; font-weight: 600">Limits of this report</h2>
+        <ul style="margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; color: #4D5B69">
+          <li>Satellite pixels are 10–30 m; a single building can sit higher or lower than its block.</li>
+          <li>Drains and raised floors are not visible from orbit. Use the site visit to confirm.</li>
+          <li>This is decision support for the credit officer, not a property survey.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</div>
+
+</body>
+</html>

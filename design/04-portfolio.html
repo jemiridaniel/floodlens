@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FloodLens: portfolio</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F5F6F4}
+a{color:#1D5FA8}a:hover{color:#123E70}
+</style>
+
+</head>
+<body>
+
+<div style="min-height: 1080px; background: #F5F6F4; color: #0F1E2D; font-family: 'IBM Plex Sans', system-ui, sans-serif">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 32px; background: #FFFFFF; border-bottom: 1px solid #D9DEE3">
+    <a href="01-new-assessment.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #0F1E2D">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#1D5FA8" stroke-width="2.2"></circle><path d="M6 13c2-2 4-2 6 0s4 2 6 0" fill="none" stroke="#1D5FA8" stroke-width="2.2" stroke-linecap="round"></path><path d="M19 19l6 6" stroke="#0F1E2D" stroke-width="2.4" stroke-linecap="round"></path></svg>
+      <span style="font-size: 19px; font-weight: 700; letter-spacing: -0.2px">FloodLens</span>
+    </a>
+    <nav aria-label="Main" style="display: flex; flex-wrap: wrap; gap: 4px">
+      <a href="01-new-assessment.html" style="padding: 10px 14px; border-radius: 8px; color: #4D5B69; font-weight: 500; font-size: 15px; text-decoration: none">New assessment</a>
+      <a href="04-portfolio.html" style="padding: 10px 14px; border-radius: 8px; background: #E8F0F9; color: #123E70; font-weight: 600; font-size: 15px; text-decoration: none">Portfolio</a>
+      <a href="03-risk-report.html" style="padding: 10px 14px; border-radius: 8px; color: #4D5B69; font-weight: 500; font-size: 15px; text-decoration: none">Reports</a>
+    </nav>
+    <div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: #4D5B69">
+      <span>Loan desk, Lagos</span>
+      <span style="width: 34px; height: 34px; border-radius: 17px; background: #0F1E2D; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px">LO</span>
+    </div>
+  </header>
+
+  <main style="max-width: 1280px; margin: 0 auto; padding: 36px 32px 56px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1 style="margin: 0; font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.4px">Portfolio flood exposure</h1>
+        <span style="font-size: 15px; color: #4D5B69">[Portfolio name] · [n] loans scored · Updated [date]</span>
+      </div>
+      <label for="csv" style="display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 18px; border-radius: 10px; border: 1.5px dashed #1D5FA8; background: #FFFFFF; color: #123E70; font-weight: 600; font-size: 15px; cursor: pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"></path></svg>
+        Upload loan CSV
+        <input id="csv" type="file" accept=".csv" style="position: absolute; width: 1px; height: 1px; opacity: 0">
+      </label>
+    </div>
+
+    <section aria-label="Summary by tier" style="display: flex; flex-wrap: wrap; gap: 12px">
+      <div style="flex: 1 1 200px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px">
+        <span style="align-self: flex-start; padding: 3px 10px; border-radius: 999px; background: #E3F2EC; color: #1A6B4F; font-size: 13px; font-weight: 600">Low</span>
+        <span style="font-size: 30px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[n]</span>
+        <span style="font-size: 13px; color: #4D5B69">₦[amount] exposure</span>
+      </div>
+      <div style="flex: 1 1 200px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px">
+        <span style="align-self: flex-start; padding: 3px 10px; border-radius: 999px; background: #FBEFD5; color: #7A4F00; font-size: 13px; font-weight: 600">Moderate</span>
+        <span style="font-size: 30px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[n]</span>
+        <span style="font-size: 13px; color: #4D5B69">₦[amount] exposure</span>
+      </div>
+      <div style="flex: 1 1 200px; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px">
+        <span style="align-self: flex-start; padding: 3px 10px; border-radius: 999px; background: #FCE4D6; color: #9A3B0B; font-size: 13px; font-weight: 600">High</span>
+        <span style="font-size: 30px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[n]</span>
+        <span style="font-size: 13px; color: #4D5B69">₦[amount] exposure</span>
+      </div>
+      <div style="flex: 1 1 200px; background: #FFFFFF; border: 2px solid #9B1C1C; border-radius: 12px; padding: 17px 19px; display: flex; flex-direction: column; gap: 6px">
+        <span style="align-self: flex-start; padding: 3px 10px; border-radius: 999px; background: #9B1C1C; color: #FFFFFF; font-size: 13px; font-weight: 600">Severe</span>
+        <span style="font-size: 30px; font-weight: 600; font-family: 'IBM Plex Mono', monospace">[n]</span>
+        <span style="font-size: 13px; color: #4D5B69">₦[amount] exposure · review first</span>
+      </div>
+    </section>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+      <section aria-label="Loans" style="flex: 999 1 640px; min-width: 0; background: #FFFFFF; border: 1px solid #D9DEE3; border-radius: 12px; overflow: hidden">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #D9DEE3">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 600">Loans, highest risk first</h2>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap">
+            <label for="filter" style="font-size: 14px; color: #4D5B69; align-self: center">Show</label>
+            <select id="filter" style="min-height: 40px; padding: 0 10px; border: 1px solid #B8C2CC; border-radius: 8px; font-size: 14px; font-family: inherit; background: #FFFFFF; color: #0F1E2D">
+              <option>All tiers</option>
+              <option>High and Severe</option>
+            </select>
+            <button type="button" style="min-height: 40px; padding: 0 14px; border: 1px solid #B8C2CC; border-radius: 8px; background: #FFFFFF; color: #0F1E2D; font-size: 14px; font-weight: 500; font-family: inherit; cursor: pointer">Export CSV</button>
+          </div>
+        </div>
+        <div style="overflow-x: auto">
+          <table style="width: 100%; min-width: 640px; border-collapse: collapse; font-size: 14px">
+            <thead>
+              <tr style="text-align: left; color: #4D5B69; background: #F8F9FA">
+                <th scope="col" style="padding: 12px 20px; font-weight: 600">Loan</th>
+                <th scope="col" style="padding: 12px 12px; font-weight: 600">Location</th>
+                <th scope="col" style="padding: 12px 12px; font-weight: 600; text-align: right">Amount (₦)</th>
+                <th scope="col" style="padding: 12px 12px; font-weight: 600">Tier</th>
+                <th scope="col" style="padding: 12px 12px; font-weight: 600; text-align: right">Score</th>
+                <th scope="col" style="padding: 12px 20px; font-weight: 600">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0001</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #9B1C1C; color: #FFFFFF; font-size: 13px; font-weight: 600">Severe</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Decline or change collateral</td>
+              </tr>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0002</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #FCE4D6; color: #9A3B0B; font-size: 13px; font-weight: 600">High</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Require flood insurance</td>
+              </tr>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0003</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #FCE4D6; color: #9A3B0B; font-size: 13px; font-weight: 600">High</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Shorten tenor</td>
+              </tr>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0004</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #FBEFD5; color: #7A4F00; font-size: 13px; font-weight: 600">Moderate</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Approve, note the risk</td>
+              </tr>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0005</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #E3F2EC; color: #1A6B4F; font-size: 13px; font-weight: 600">Low</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Approve</td>
+              </tr>
+              <tr style="border-top: 1px solid #EDF0F2">
+                <td style="padding: 14px 20px; font-family: 'IBM Plex Mono', monospace"><a href="03-risk-report.html">LN-0006</a></td>
+                <td style="padding: 14px 12px">[Area]</td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[amount]</td>
+                <td style="padding: 14px 12px"><span style="padding: 3px 10px; border-radius: 999px; background: #E3F2EC; color: #1A6B4F; font-size: 13px; font-weight: 600">Low</span></td>
+                <td style="padding: 14px 12px; text-align: right; font-family: 'IBM Plex Mono', monospace">[—]</td>
+                <td style="padding: 14px 20px">Approve</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-label="Portfolio map" style="flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+        <div style="background: #1B2730; border-radius: 12px; overflow: hidden">
+          <svg viewBox="0 0 360 420" width="100%" role="img" aria-label="Map of loan locations coloured by flood risk tier">
+            <rect width="360" height="420" fill="#24323B"></rect>
+            <path d="M0 300 C80 280 140 330 210 300 S300 250 360 270 L360 420 L0 420 Z" fill="#2A5B7E"></path>
+            <path d="M-10 110 C90 140 160 80 240 120 S320 170 370 140" fill="none" stroke="#2F6E97" stroke-width="12"></path>
+            <circle cx="70" cy="250" r="9" fill="#9CCFB9" stroke="#0F1E2D" stroke-width="2"></circle>
+            <circle cx="120" cy="190" r="9" fill="#9CCFB9" stroke="#0F1E2D" stroke-width="2"></circle>
+            <circle cx="190" cy="230" r="9" fill="#F0C977" stroke="#0F1E2D" stroke-width="2"></circle>
+            <circle cx="235" cy="135" r="9" fill="#F0A47A" stroke="#0F1E2D" stroke-width="2"></circle>
+            <circle cx="160" cy="290" r="9" fill="#F0A47A" stroke="#0F1E2D" stroke-width="2"></circle>
+            <circle cx="260" cy="282" r="11" fill="#B83A3A" stroke="#FFFFFF" stroke-width="2.5"></circle>
+          </svg>
+        </div>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #4D5B69">Dots are coloured by tier. Click a loan in the table to open its full report.</p>
+      </section>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

@@ -41,6 +41,7 @@ class Score(BaseModel):
     contributions: dict[str, float]  # metric id -> points added
     missing: list[str]
     missing_groups: list[str] = []  # whole kinds of evidence absent; forces confidence low
+    tier_floor: str | None = None  # set when an evidence rule raised the tier above the score
 
 
 class AssessmentRequest(BaseModel):
@@ -64,6 +65,7 @@ class Assessment(BaseModel):
     evidence: dict[str, str] = {}
     notes: list[str] = []
     has_street_reports: bool = False  # drives the mandatory "no street-level reports" line
+    street_flood_events: int = 0  # distinct events, after merging reports within 3 days
 
 
 class Driver(BaseModel):
@@ -153,3 +155,4 @@ class FloodHistory(BaseModel):
     from_cache: bool = False
     searched: bool = False  # False means we never got an answer, not that there were no floods
     text_checked: bool = False  # cache entries written before the page check are upgraded on load
+    stopped_early: bool = False  # the time limit cut the search short; this is a partial answer

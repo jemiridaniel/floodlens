@@ -26,7 +26,8 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor, wait
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,17 @@ YEARS_BACK = 5
 MAX_MODEL_CALLS = 3
 REQUEST_TIMEOUT_S = 180  # a search that hangs must not stall a whole validation run
 SEARCH_CONTEXT = "medium"
+
+# One assessment used to take 260 s because a single agent worked through every place
+# name in turn, choosing its own number of searches (12-14). Now each name is its own
+# small, capped search and they run together, under one wall-clock deadline. Whatever is
+# verified when the clock runs out is what the officer gets, with a note saying so: a
+# partial answer that says it is partial beats a complete one that arrives too late.
+SEARCH_DEADLINE_S = 90
+MAX_SEARCHES_PER_NAME = 6
+MAX_NAMES = 4  # the most specific names; past that it is just "Lagos"
+SEARCH_EFFORT = "low"  # searching and quoting, not reasoning. The explain step keeps its own.
+VERIFY_WORKERS = 8
 MAX_QUOTE_WORDS = 30
 USD_PER_SEARCH = 2.50 / 1000
 NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
@@ -109,10 +121,24 @@ class Place:
     def describe(self) -> str:
         return ", ".join(self.names + [self.state]) or self.state
 
+    def search_names(self) -> list[str]:
+        """The names a search would actually use, normalised: lowercased, punctuation and
+        abbreviations regularised, and the house number dropped.
+
+        The cache is keyed on this set, so "24 Ago Palace Way, Okota" and "Ago Palace Way,
+        Okota" are one entry. Two officers typing the same street differently should not
+        each pay for a search.
+        """
+        out: list[str] = []
+        for name in self.names[:MAX_NAMES] or [self.state]:
+            clean = flatten(HOUSE_NUMBER.sub("", name))
+            if clean and clean not in out:
+                out.append(clean)
+        return sorted(out)
+
     def key(self) -> str:
-        raw = "|".join(n or "" for n in (self.typed, self.street, self.estate,
-                                         self.neighbourhood, self.area, self.lga, self.state))
-        slug = re.sub(r"[^a-z0-9]+", "-", raw.casefold()).strip("-")[:60]
+        raw = "|".join(self.search_names())
+        slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")[:60]
         return f"{slug or 'unknown'}-{hashlib.sha1(raw.encode()).hexdigest()[:8]}"
 
 
@@ -194,12 +220,14 @@ REPORT_SCHEMA: dict[str, Any] = {
 }
 
 
-def _instructions(place: Place, since: dt.date) -> str:
+def _instructions(name: str, place: Place, since: dt.date) -> str:
     return (
-        f"Find news reports of flooding at this place in Lagos, Nigeria:\n{place.describe()}\n\n"
+        f"Find news reports of flooding at this place in Lagos, Nigeria:\n{name}\n\n"
+        f"It is in {place.describe()}.\n"
         f"Only events on or after {since.isoformat()} count.\n\n"
-        "Use web_search. Search the specific names above, the most specific first, together with "
-        "words like flood, flooding, flooded, submerged. Nigerian outlets cover this best.\n\n"
+        f"Use web_search, at most {MAX_SEARCHES_PER_NAME} calls. Search \"{name}\" with words "
+        "like flood, flooding, flooded, submerged. Nigerian outlets cover this best. Open the "
+        "most promising results rather than running more searches.\n\n"
         "Rules:\n"
         "1. Only report what a source you actually opened says. Never guess a URL: a URL you did "
         "not receive from search will be discarded and the report with it.\n"
@@ -215,6 +243,9 @@ def _instructions(place: Place, since: dt.date) -> str:
 
 # "James Kunle St" and "James Kunle Street" are the same street. Both sides of every
 # comparison are expanded, so it does not matter which form the article uses.
+# "24 Ago Palace Way" and "No. 24 Ago Palace Way" name the same street as "Ago Palace Way".
+HOUSE_NUMBER = re.compile(r"^\s*(?:no\.?|number)?\s*\d+[a-z]?\s*[,/-]?\s+", re.I)
+
 ABBREVIATIONS = {
     "rd": "road", "st": "street", "str": "street", "ave": "avenue", "av": "avenue",
     "cres": "crescent", "cl": "close", "dr": "drive", "ln": "lane", "blvd": "boulevard",
@@ -271,8 +302,9 @@ def level_on_page(flat_page: str, place: Place) -> MatchLevel | None:
     return None
 
 
-def check_text(reports: list[FloodReport], place: Place,
-               client: Any | None = None) -> tuple[list[FloodReport], list[str], list[str]]:
+def check_text(reports: list[FloodReport], place: Place, client: Any | None = None,
+               workers: int = 1, deadline: float | None = None
+               ) -> tuple[list[FloodReport], list[str], list[str]]:
     """Open each page and ask whether it is about our site. Drops explicit contradictions.
 
     Grounding proved the search tool fetched the URL. It did not prove the article is
@@ -288,8 +320,17 @@ def check_text(reports: list[FloodReport], place: Place,
     dropped: list[str] = []
     corrections: list[str] = []  # kept: a demotion is not a rejection and must not read as one
     try:
-        for r in reports:
-            body = page_text(r.url, client)
+        # Fetching ten articles one after another costs a minute on its own.
+        if workers > 1 and len(reports) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(reports))) as pool:
+                bodies = list(pool.map(lambda r: page_text(r.url, client), reports))
+        else:
+            bodies = [page_text(r.url, client) for r in reports]
+        for r, body in zip(reports, bodies, strict=True):
+            if deadline is not None and time.monotonic() > deadline and body is None:
+                r.text_verified, r.quote_found, r.phrase_found = "unknown", None, None
+                kept.append(r)
+                continue
             if body is None:
                 r.text_verified, r.quote_found, r.phrase_found = "unknown", None, None
                 kept.append(r)  # a paywall is not evidence against a report
@@ -494,6 +535,83 @@ def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
     return history
 
 
+@dataclass
+class _Found:
+    """What one name's search came back with, before any verification."""
+
+    raw: list[dict] = field(default_factory=list)
+    cited: set[str] = field(default_factory=set)
+    searches: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    error: str = ""
+    submitted: bool = False  # the model actually answered, even if the answer was "none"
+
+
+def _search_one(name: str, place: Place, client: Any, model: str, since: dt.date) -> _Found:
+    """One capped search for one place name. Never raises: errors come back in the result."""
+    found = _Found()
+    tools = [
+        {"type": "web_search", "search_context_size": SEARCH_CONTEXT,
+         "user_location": {"country": "NG", "city": "Lagos"}},
+        {"type": "function", "name": "submit_flood_history", "strict": True,
+         "description": "Submit the reports you verified. Call exactly once, last.",
+         "parameters": REPORT_SCHEMA},
+    ]
+    items: list[Any] = [{"type": "message", "role": "user", "content": [
+        {"type": "input_text", "text": _instructions(name, place, since)}]}]
+    for attempt in range(MAX_MODEL_CALLS):
+        # Only the first turn may search. A follow-up exists to collect an answer the model
+        # owed us, not to start again: leaving web_search on it quadrupled the bill, because
+        # hitting the cap mid-search makes the model skip submitting and then search afresh.
+        searching = attempt == 0
+        try:
+            resp = client.responses.create(
+                model=model, input=items,
+                tools=tools if searching else tools[1:],
+                max_tool_calls=MAX_SEARCHES_PER_NAME if searching else 1,
+                reasoning={"effort": SEARCH_EFFORT})
+        except Exception as exc:
+            found.error = f"search for {name!r} failed: {exc.__class__.__name__}: {exc}"
+            return found
+        usage = getattr(resp, "usage", None)
+        found.input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
+        found.output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+        found.searches += _search_calls(resp)
+        found.cited |= grounded_urls(resp)
+
+        calls = [i for i in (getattr(resp, "output", None) or [])
+                 if getattr(i, "type", "") == "function_call" and i.name == "submit_flood_history"]
+        if not calls:
+            items.append({"type": "message", "role": "user", "content": [{"type": "input_text",
+                          "text": "Stop searching. Call submit_flood_history now with what you "
+                                  "already found, or with an empty list if that is nothing."}]})
+            continue
+        try:
+            raw = json.loads(calls[0].arguments or "{}").get("reports") or []
+        except json.JSONDecodeError as exc:
+            found.error = f"submit_flood_history for {name!r} was not valid JSON: {exc}"
+            raw = []
+        found.raw = raw if isinstance(raw, list) else []
+        found.submitted = True
+        return found
+    found.error = f"no submit_flood_history call for {name!r}"
+    return found
+
+
+def _dedupe(raw: list[dict]) -> list[dict]:
+    """The same article turns up under several names; keep it once."""
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for item in raw:
+        key = (_normalise(str(item.get("url", ""))), str(item.get("event_date", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = None) -> FloodHistory:
     settings = get_settings()
     own = client is None
@@ -505,52 +623,54 @@ def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = No
 
     since = today.replace(year=today.year - YEARS_BACK)
     out = FloodHistory(place=place.describe())
-    tools = [
-        {"type": "web_search", "search_context_size": SEARCH_CONTEXT,
-         "user_location": {"country": "NG", "city": "Lagos"}},
-        {"type": "function", "name": "submit_flood_history", "strict": True,
-         "description": "Submit the reports you verified. Call exactly once, last.",
-         "parameters": REPORT_SCHEMA},
-    ]
-    items: list[Any] = [{"type": "message", "role": "user", "content": [
-        {"type": "input_text", "text": _instructions(place, since)}]}]
-    cited: set[str] = set()
+    names = place.names[:MAX_NAMES] or [place.state]
+    deadline = time.monotonic() + SEARCH_DEADLINE_S
+    stopped_early = False
     try:
-        for _ in range(MAX_MODEL_CALLS):
-            try:
-                resp = client.responses.create(
-                    model=settings.spark_model, input=items, tools=tools,
-                    reasoning={"effort": settings.reasoning_effort})
-            except Exception as exc:
-                out.dropped.append(f"search call failed: {exc.__class__.__name__}: {exc}")
-                return out
-            usage = getattr(resp, "usage", None)
-            out.input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
-            out.output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
-            out.searches += _search_calls(resp)
-            cited |= grounded_urls(resp)
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            futures = {pool.submit(_search_one, n, place, client, settings.spark_model, since): n
+                       for n in names}
+            done, pending = wait(futures, timeout=max(1.0, deadline - time.monotonic()))
+            for future in pending:
+                future.cancel()
+                stopped_early = True
+                out.dropped.append(f"search for {futures[future]!r}: stopped at the "
+                                   f"{SEARCH_DEADLINE_S}s limit")
+            raw: list[dict] = []
+            cited: set[str] = set()
+            answered = False
+            for future in done:
+                got = future.result()
+                answered = answered or got.submitted
+                raw += got.raw
+                cited |= got.cited
+                out.searches += got.searches
+                out.input_tokens += got.input_tokens
+                out.output_tokens += got.output_tokens
+                if got.error:
+                    out.dropped.append(got.error)
 
-            calls = [i for i in (getattr(resp, "output", None) or [])
-                     if getattr(i, "type", "") == "function_call" and i.name == "submit_flood_history"]
-            if not calls:
-                items.append({"type": "message", "role": "user", "content": [{"type": "input_text",
-                              "text": "Now call submit_flood_history with what you verified."}]})
-                continue
-            try:
-                raw = json.loads(calls[0].arguments or "{}").get("reports") or []
-            except json.JSONDecodeError as exc:
-                out.dropped.append(f"submit_flood_history was not valid JSON: {exc}")
-                raw = []
-            kept, dropped = keep_reports(raw if isinstance(raw, list) else [], cited, since)
-            kept, failed_text, corrected = check_text(kept, place, http)
-            out.reports = kept
-            out.dropped += dropped + failed_text
-            out.corrections += corrected
-            out.searched = True
-            out.text_checked = True
-            break
-        else:
-            out.dropped.append(f"no submit_flood_history call in {MAX_MODEL_CALLS} model calls")
+        if not done:
+            out.dropped.append("no search finished before the limit")
+            return out
+        if not answered:
+            # Every name failed or never answered. That is not "no floods here": leaving
+            # searched False drops the metric so the group goes missing and confidence is
+            # capped, instead of the site being quietly credited with a clean record.
+            return out
+
+        kept, dropped = keep_reports(_dedupe(raw), cited, since)
+        kept, failed_text, corrected = check_text(kept, place, http, workers=VERIFY_WORKERS,
+                                                  deadline=deadline)
+        out.reports = kept
+        out.dropped += dropped + failed_text
+        out.corrections += corrected
+        out.searched = True
+        out.text_checked = True
+        if stopped_early or time.monotonic() > deadline:
+            out.stopped_early = True
+            out.dropped.append("search stopped early at the time limit: this is what was "
+                               "verified in time, not everything there is")
     finally:
         if own:
             client.close()

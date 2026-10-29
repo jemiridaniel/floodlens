@@ -31,6 +31,17 @@ is now three parts, and each is only allowed to claim what it can support:
    because Lagos news covers some neighbourhoods far better than others.
 3. **Rainfall.** Weight 0.10. A ~10 km grid, so it separates years, not addresses.
 
+**Evidence rule: the street-level tier floor.** Two or more *distinct* flood events on this
+street in the last 5 years — each a news report whose page names the street our geocoder
+gave us, events within 3 days counted once — holds the tier at **at least High**, whatever
+the weighted score says (`apply_tier_floor` in `scoring.py`). It is a floor, not a weight:
+it only ever raises a tier. Direct evidence that an address floods should not be outvoted
+by proxies that validation showed are weak. The cost is that it leans on news coverage,
+which is uneven across Lagos, so a well-reported street reaches the floor while an equally
+exposed but less-covered one does not. That is why it raises and never lowers, and it is
+recorded in `docs/validation.md`. It is **not** covered by the scoring freeze in the sense
+of being tunable: changing the threshold needs the same new, independent sites.
+
 Three rules that fall out of this, all enforced in code:
 - **Area-level news reports score zero.** 27 of 30 random Lagos addresses turn up one, so
   they carry no information about an address. They are still listed as context.

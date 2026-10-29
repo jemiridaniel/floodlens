@@ -48,6 +48,8 @@ from dataclasses import dataclass
 
 from .schemas import Action, Metric, Score, Tier
 
+YEARS = 5  # the flood-history window, matching agent/history.YEARS_BACK
+
 
 @dataclass(frozen=True)
 class Feature:
@@ -94,6 +96,20 @@ GROUPS: dict[str, tuple[str, ...]] = {
 AREA_SCREEN = ("coastal and riverine", "terrain and surface")  # the two halves of the 0.50
 
 TIER_CUTS = ((75, Tier.severe), (50, Tier.high), (25, Tier.moderate), (0, Tier.low))
+TIER_ORDER = (Tier.low, Tier.moderate, Tier.high, Tier.severe)
+
+# An EVIDENCE RULE, not a weight. Two or more distinct flood events on this street in five
+# years, each one a news report whose page names the street our geocoder gave us, is direct
+# evidence that the address floods. No combination of proxies should be able to call that
+# Low or Moderate, and a weighted sum can, because the proxies are weak by design.
+#
+# It only ever raises a tier, never lowers one, so it is conservative in the lending
+# sense. The cost is that it leans on news coverage, which is uneven across Lagos: a
+# well-reported street reaches the floor while an equally exposed but less-covered one
+# does not. That asymmetry is recorded in docs/validation.md and is the reason the rule is
+# a floor rather than a term in the formula.
+TIER_FLOOR_STREET_EVENTS = 2
+TIER_FLOOR = Tier.high
 
 ALLOWED_ACTIONS: dict[Tier, list[Action]] = {
     Tier.low: [Action.approve],
@@ -110,14 +126,26 @@ def tier_for(score: float) -> Tier:
     return Tier.low
 
 
-def score(metrics: list[Metric]) -> Score:
+def apply_tier_floor(tier: Tier, street_events: int) -> tuple[Tier, str | None]:
+    """Raise the tier when the street itself has a flood record. Never lowers it."""
+    if street_events < TIER_FLOOR_STREET_EVENTS:
+        return tier, None
+    if TIER_ORDER.index(tier) >= TIER_ORDER.index(TIER_FLOOR):
+        return tier, None
+    return TIER_FLOOR, (f"{street_events} distinct street-level flood events in the last "
+                        f"{YEARS} years, so the tier is held at {TIER_FLOOR.value} "
+                        f"whatever the weighted score says")
+
+
+def score(metrics: list[Metric], street_events: int = 0) -> Score:
     by_id = {m.id: m for m in metrics}
     present = [f for f in FEATURES if f.metric_id in by_id]
     missing = [f.metric_id for f in FEATURES if f.metric_id not in by_id]
     total_w = sum(f.weight for f in present)
     if total_w == 0:
-        return Score(score=0, tier=Tier.low, confidence="low", contributions={}, missing=missing,
-                     missing_groups=list(GROUPS))
+        tier, floor = apply_tier_floor(Tier.low, street_events)
+        return Score(score=0, tier=tier, confidence="low", contributions={}, missing=missing,
+                     missing_groups=list(GROUPS), tier_floor=floor)
 
     contributions = {
         f.metric_id: round(100 * f.weight / total_w * f.risk(by_id[f.metric_id].value), 1) for f in present
@@ -130,5 +158,6 @@ def score(metrics: list[Metric]) -> Score:
     gone = [g for g, ids in GROUPS.items() if all(i in missing for i in ids)]
     if gone:
         confidence = "low"
-    return Score(score=value, tier=tier_for(value), confidence=confidence,
-                 contributions=contributions, missing=missing, missing_groups=gone)
+    tier, floor = apply_tier_floor(tier_for(value), street_events)
+    return Score(score=value, tier=tier, confidence=confidence, contributions=contributions,
+                 missing=missing, missing_groups=gone, tier_floor=floor)

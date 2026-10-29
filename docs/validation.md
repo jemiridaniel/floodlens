@@ -167,6 +167,29 @@ rejections roughly threefold. On the 12 places newly searched this run, 13 such 
 **4 rejections / 9 corrections**. `FloodHistory` now keeps `dropped` and `corrections`
 apart and the summary counts them separately.
 
+## Evidence rule: the street-level tier floor (added after Run 4)
+
+Two or more distinct street-level flood events in 5 years holds the tier at **at least
+High**. Reports within 3 days are one event, so three outlets covering one storm do not
+reach it; it takes two separate floods.
+
+**Why a floor and not a weight.** The weights are priors over proxies, and the baseline
+showed those proxies barely separate a flooding street from a dry one (AUC 0.578 on
+satellite alone). A verified record of the street flooding twice is not a proxy. A
+weighted sum can average that away against seven weak features; a floor cannot.
+
+**What it costs.** It leans on news coverage, and Lagos news covers some neighbourhoods far
+better than others. A well-reported street reaches the floor; an equally exposed but
+less-covered one does not. So the rule only ever **raises** a tier, never lowers one: being
+unreported can never be used to clear a site. Reporting bias then makes FloodLens more
+cautious where it has evidence, rather than more confident where it has none.
+
+**What it would have done.** On the Run 4 set, Ago Palace Way has two distinct
+street-level events (2025-09-16 and 2026-06-30) and scored 42.5 / Moderate; the floor
+holds it at High. No baseline point in Run 4 had two street-level events — only 2 of 30
+had even one street-level report — so the floor is rare by construction. It is a rule
+about evidence, so it is **not** validated by that observation and must not be tuned on it.
+
 ## Scoring is frozen as of Run 4
 
 No weight, ramp or match-level change without new, independent validation sites. See

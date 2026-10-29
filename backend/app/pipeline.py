@@ -28,12 +28,15 @@ def assemble(req: AssessmentRequest, layers, history=None) -> Assessment:
     same time and still end up with exactly one definition of what an Assessment is.
     """
     metrics = compute_metrics(layers)
+    street_events = 0
     if history is not None:
-        from .agent.history import history_metric  # local: keeps the offline path import-free
+        from .agent.history import distinct_events, history_metric  # keeps the offline path clean
         found = history_metric(history)
         if found is not None:
             metrics.append(found)
-    s = score(metrics)
+        street_events = len(distinct_events(
+            [r for r in history.reports if r.match_level == "street"]))
+    s = score(metrics, street_events=street_events)
     evidence = dict(layers.item_ids)
     if layers.optical:
         evidence["optical"] = layers.optical.item_id
@@ -56,4 +59,5 @@ def assemble(req: AssessmentRequest, layers, history=None) -> Assessment:
         evidence=evidence,
         notes=notes,
         has_street_reports=street,
+        street_flood_events=street_events,
     )

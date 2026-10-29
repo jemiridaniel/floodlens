@@ -86,14 +86,23 @@ class Resp:
 
 
 class FakeClient:
+    """Canned Responses API.
+
+    One lookup now issues one search per place name, concurrently, so a test that scripts
+    a single turn means "every name answers like this". The last turn is reused once the
+    script runs out; tests that care about the exact call count assert on `requests`.
+    """
+
     def __init__(self, *turns):
-        self.turns, self.requests = list(turns), []
+        self.turns, self.requests, self.last = list(turns), [], None
         self.responses = SimpleNamespace(create=self._create)
 
     def _create(self, **kwargs):
         self.requests.append(kwargs)
-        assert self.turns, "more model calls than the test scripted"
-        return self.turns.pop(0)
+        if self.turns:
+            self.last = self.turns.pop(0)
+        assert self.last is not None, "no turn scripted"
+        return self.last
 
 
 def turn(reports, cited_urls=(), searches=1, via="open_page"):
@@ -146,7 +155,8 @@ def test_a_cited_report_is_kept():
     assert len(h.reports) == 1 and h.dropped == []
     r = h.reports[0]
     assert r.url == CITED and r.match_level == MatchLevel.street and r.event_date == "2026-06-30"
-    assert h.searches == 2  # the query and the page open are both billable calls
+    # one capped search per place name, each a query plus a page open
+    assert h.searches == 2 * len(PLACE.names[:H.MAX_NAMES])
     assert h.cost_usd > 2 * H.USD_PER_SEARCH
 
 
@@ -168,7 +178,7 @@ def test_a_queried_but_unopened_url_is_not_grounding():
     """Running a search is not evidence; only a page the tool actually opened is."""
     h = run(FakeClient(turn([report()], cited_urls=[], searches=4)))
     assert h.reports == [] and "never retrieved" in h.dropped[0]
-    assert h.searches == 4
+    assert h.searches == 4 * len(PLACE.names[:H.MAX_NAMES])
 
 
 def test_an_undated_report_is_dropped():
@@ -505,3 +515,85 @@ def test_a_demotion_is_a_correction_not_a_rejection():
     nowhere = Page("<html><body><p>Flooding in Kano.</p></body></html>")
     h2 = run(FakeClient(turn([report()], cited_urls=[CITED])), http=FakeHttp({CITED: nowhere}))
     assert h2.reports == [] and len(h2.dropped) == 1 and h2.corrections == []
+
+
+# ------------------------------------------------- speed: capped, concurrent, deadlined
+def test_each_place_name_gets_its_own_capped_search():
+    """One small search per name, run together, instead of one agent working through all
+    of them: the sequential version took 260 s."""
+    place = H.Place(street="Ago Palace Way", estate=None, area="Cele", lga="Oshodi/Isolo",
+                    neighbourhood="Okota")
+    client = FakeClient(*[turn([report()], cited_urls=[CITED]) for _ in range(4)])
+    h = H.lookup(Site(6.5, 3.3), client=client, place=place, today=TODAY, cache_dir=_tmp(),
+                 http=FakeHttp({CITED: Page(ARTICLE)}))
+    assert len(client.requests) == len(place.names[:H.MAX_NAMES])
+    for request in client.requests:
+        assert request["max_tool_calls"] == H.MAX_SEARCHES_PER_NAME
+        assert request["reasoning"] == {"effort": H.SEARCH_EFFORT}  # not the explain effort
+    searched = [json.dumps(r["input"]) for r in client.requests]
+    assert any("Ago Palace Way" in s for s in searched)
+    assert any("Okota" in s for s in searched)
+    assert h.searched is True
+
+
+def test_the_same_article_found_under_two_names_is_kept_once():
+    place = H.Place(street="Ago Palace Way", estate=None, area="Cele", lga="Oshodi/Isolo")
+    client = FakeClient(*[turn([report()], cited_urls=[CITED]) for _ in range(4)])
+    h = H.lookup(Site(6.5, 3.3), client=client, place=place, today=TODAY, cache_dir=_tmp(),
+                 http=FakeHttp({CITED: Page(ARTICLE)}))
+    assert len(h.reports) == 1
+
+
+def test_a_search_that_runs_long_returns_what_is_verified_with_a_note(monkeypatch):
+    """A partial answer that says it is partial beats a complete one that arrives too late."""
+    monkeypatch.setattr(H, "SEARCH_DEADLINE_S", 1)
+    place = H.Place(street="Ago Palace Way", estate=None, area=None, lga="Ojo")
+
+    class Slow(FakeClient):
+        def _create(self, **kwargs):
+            import time
+            if len(self.requests) >= 1:
+                time.sleep(4)  # the second name is still going when the clock runs out
+            return super()._create(**kwargs)
+
+    client = Slow(*[turn([report()], cited_urls=[CITED]) for _ in range(4)])
+    h = H.lookup(Site(6.5, 3.3), client=client, place=place, today=TODAY, cache_dir=_tmp(),
+                 http=FakeHttp({CITED: Page(ARTICLE)}))
+    assert h.stopped_early is True
+    assert any("stopped early at the time limit" in d for d in h.dropped)
+    assert h.searched is True and len(h.reports) == 1  # what did come back is kept
+
+
+def test_a_failed_name_does_not_lose_the_others():
+    place = H.Place(street="Ago Palace Way", estate=None, area=None, lga="Ojo")
+
+    class Flaky(FakeClient):
+        def _create(self, **kwargs):
+            if len(self.requests) == 1:
+                self.requests.append(kwargs)
+                raise RuntimeError("502 upstream")
+            return super()._create(**kwargs)
+
+    client = Flaky(*[turn([report()], cited_urls=[CITED]) for _ in range(3)])
+    h = H.lookup(Site(6.5, 3.3), client=client, place=place, today=TODAY, cache_dir=_tmp(),
+                 http=FakeHttp({CITED: Page(ARTICLE)}))
+    assert h.searched is True and len(h.reports) == 1
+    assert any("502 upstream" in d for d in h.dropped)
+
+
+# ------------------------------------------------- cache key on normalised names
+def test_address_variants_share_one_cache_entry():
+    """Two officers typing the same street differently must not each pay for a search."""
+    base = dict(street="Ago Palace Way", estate=None, area="Cele", lga="Oshodi/Isolo")
+    typed = [H.Place(**base, typed=t) for t in
+             ("24 Ago Palace Way, Okota", "No. 24 ago palace way, okota",
+              "24A  Ago Palace Way,  Okota")]
+    assert len({p.key() for p in typed}) == 1
+    assert typed[0].search_names() == typed[1].search_names()
+    assert all("24" not in n for n in typed[0].search_names())
+
+
+def test_a_different_street_is_a_different_entry():
+    base = dict(estate=None, area="Cele", lga="Oshodi/Isolo")
+    assert (H.Place(street="Ago Palace Way", **base).key()
+            != H.Place(street="Okota Road", **base).key())

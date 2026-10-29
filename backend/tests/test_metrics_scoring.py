@@ -292,3 +292,57 @@ def test_a_layer_is_retried_once_before_being_given_up_on():
     assert try_twice("optical", broken, notes) is None
     assert len(always) == 2
     assert notes and "after 2 tries" in notes[0] and "RuntimeError" in notes[0]
+
+
+# ------------------------------------------------- the street-level tier floor
+def test_two_street_events_hold_the_tier_at_high():
+    """An evidence rule, not a weight: verified repeat flooding on this street outranks
+    any combination of proxies."""
+    from app.scoring import TIER_FLOOR, TIER_FLOOR_STREET_EVENTS, apply_tier_floor
+    assert TIER_FLOOR_STREET_EVENTS == 2 and TIER_FLOOR == Tier.high
+
+    for start in (Tier.low, Tier.moderate):
+        raised, why = apply_tier_floor(start, 2)
+        assert raised == Tier.high
+        assert "2 distinct street-level flood events" in why and "5 years" in why
+
+
+def test_the_floor_never_lowers_a_tier():
+    from app.scoring import apply_tier_floor
+    for tier in (Tier.high, Tier.severe):
+        held, why = apply_tier_floor(tier, 5)
+        assert held == tier and why is None
+
+
+def test_one_event_is_not_enough():
+    from app.scoring import apply_tier_floor
+    for n in (0, 1):
+        tier, why = apply_tier_floor(Tier.low, n)
+        assert tier == Tier.low and why is None
+
+
+def test_the_floor_shows_in_the_score_and_names_itself():
+    low = score([Metric(id="m_max_daily_rain", label="", value=0, unit="mm", source="")])
+    assert low.tier == Tier.low and low.tier_floor is None
+
+    floored = score([Metric(id="m_max_daily_rain", label="", value=0, unit="mm", source="")],
+                    street_events=2)
+    assert floored.tier == Tier.high
+    assert floored.score == low.score  # the score is untouched; only the tier is held
+    assert floored.tier_floor and "street-level" in floored.tier_floor
+
+
+def test_one_flood_reported_by_three_outlets_does_not_reach_the_floor():
+    """The floor counts events, not articles, or three outlets covering one storm would
+    push every reported street to High."""
+    from app.agent.history import distinct_events
+    from app.schemas import FloodReport
+    same_storm = [FloodReport(place_named="X", match_level="street", event_date=d, publisher=p,
+                              url=f"https://example.test/{p}", quote="q")
+                  for d, p in (("2026-06-29", "a"), ("2026-06-30", "b"), ("2026-06-30", "c"))]
+    assert len(distinct_events(same_storm)) == 1
+
+    two_storms = same_storm + [FloodReport(place_named="X", match_level="street",
+                                           event_date="2025-09-16", publisher="d",
+                                           url="https://example.test/d", quote="q")]
+    assert len(distinct_events(two_storms)) == 2

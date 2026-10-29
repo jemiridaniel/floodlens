@@ -8,6 +8,67 @@ Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/m
 
 > **Built during the hackathon.** All code in this repository was written from Oct 27, 2026 onward, during the event. No code is reused from any earlier project.
 
+## Running it
+
+Two parts: a FastAPI backend and a Next.js frontend. The backend holds every credential;
+the frontend has one setting and no keys.
+
+### 1. Keys
+
+Copy `.env.example` to `.env` **in the repository root** (not in `backend/`) and fill in
+`MODEL_API_KEY`. `BASETEN_API_KEY` is optional.
+
+### 2. Backend
+
+```bash
+cd backend
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q && ruff check .            # 168 tests, all offline
+uvicorn app.main:app --reload        # http://localhost:8000
+```
+
+Useful flags:
+
+```bash
+# replay finished assessments instantly, for demos (only ever replays a real run)
+FLOODLENS_DEMO_CACHE=1 uvicorn app.main:app --reload
+
+# one site on the command line, with the agent's explanation
+python scripts/assess_site.py --lat 6.4541 --lon 3.3947 --label "Lagos Island" --explain
+
+# the validation set, and the random-baseline comparison (see docs/validation.md)
+python scripts/validate.py --baseline 30 --history
+```
+
+### 3. Frontend
+
+```bash
+cd web
+cp .env.local.example .env.local     # NEXT_PUBLIC_API_URL=http://localhost:8000
+npm install
+npm run dev                          # http://localhost:3000
+```
+
+The backend allows requests from `localhost:3000` only. Start the backend first: the
+frontend has nothing to show without it.
+
+### What you will see
+
+1. **New assessment** — tap the map to drop the pin (rings show the 250 m and 500 m
+   measurement radii), add the address, loan amount, tenor, a note and up to five photos.
+   The typed address widens the news search; photo location data is stripped before
+   anything is stored.
+2. **Working on it** — the six steps as they run, with the evidence images appearing as
+   they are produced, elapsed time and running cost. The area screen and the flood history
+   run at the same time, so the first two steps start together.
+3. **Risk report** — tier, score, recommended action and whether the agent's numbers were
+   verified; drivers grouped by evidence type; flood-report cards with the match level,
+   date, quote and a link to the source; site photos with SAM overlays; and what the
+   report cannot tell you.
+
+Portfolio is a placeholder; the batch screener comes after the single-site flow is solid.
+
 ## How it works
 
 | Step | What happens | Done by |

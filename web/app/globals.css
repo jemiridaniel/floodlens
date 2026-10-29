@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/* Design tokens from design/README.md. Kept here so every component shares one source. */
+@theme {
+  --color-ink: #0f1e2d;
+  --color-muted: #4d5b69;
+  --color-ground: #f5f6f4;
+  --color-card: #ffffff;
+  --color-line: #d9dee3;
+  --color-rule: #edf0f2;
+  --color-accent: #1d5fa8;
+  --color-accent-hover: #123e70;
+  --color-tint: #e8f0f9;
+
+  --color-low-bg: #e3f2ec;
+  --color-low-ink: #1a6b4f;
+  --color-moderate-bg: #fbefd5;
+  --color-moderate-ink: #7a4f00;
+  --color-high-bg: #fce4d6;
+  --color-high-ink: #9a3b0b;
+  --color-severe-bg: #9b1c1c;
+  --color-severe-ink: #ffffff;
+
+  --color-water: #3fa9f5;
+  --color-built: #f2a33a;
+
+  --radius-card: 12px;
+  --radius-button: 10px;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+html,
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+
+/* Loan officers use phones: every tappable thing clears 44 px. */
+button,
+a[role="button"],
+input[type="file"]::file-selector-button,
+summary {
+  min-height: 44px;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 11px;
+}

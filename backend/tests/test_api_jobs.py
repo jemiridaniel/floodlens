@@ -280,3 +280,60 @@ def test_the_demo_cache_is_off_by_default(api, tmp_path, monkeypatch):
     drain(api, start(api))
     assert not (tmp_path / "demo").exists()
     assert api.get("/health").json()["demo_cache"] == "off"
+
+
+def test_a_site_with_no_street_reports_says_so(api):
+    """The Lekki Phase 1 case: the search ran, found nothing at street level, and the
+    report must say so in those words. The UI keys its banner off has_street_reports."""
+    from app.agent.loop import NO_STREET_REPORTS
+    HOOKS["history_lookup"] = fake_history(reports=[])
+    assessment_id = start(api, label="Lekki Phase 1 shop")
+    drain(api, assessment_id)
+    body = api.get(f"/assessments/{assessment_id}").json()
+
+    a = body["assessment"]
+    assert a["has_street_reports"] is False
+    assert a["street_flood_events"] == 0
+    assert body["reports"] == []
+    # the search ran and found nothing, which is a measurement: the group is still present
+    assert "local history" not in a["score"]["missing_groups"]
+    assert a["score"]["tier_floor"] is None
+    assert NO_STREET_REPORTS == ("No street-level flood reports found. "
+                                 "This does not mean the site is safe.")
+
+
+def test_an_area_only_report_is_not_a_street_report(api):
+    """Area matches are listed as context but must not switch off the sentence."""
+    from app.schemas import FloodReport
+    HOOKS["history_lookup"] = fake_history(reports=[
+        FloodReport(place_named="Oshodi/Isolo", match_level="area", event_date="2026-06-30",
+                    publisher="Punch", url="https://example.test/b", quote="district flooded",
+                    text_verified="true")])
+    assessment_id = start(api)
+    drain(api, assessment_id)
+    body = api.get(f"/assessments/{assessment_id}").json()
+    assert body["assessment"]["has_street_reports"] is False  # the sentence still shows
+    assert len(body["reports"]) == 1  # and the report is still listed as context
+
+
+def test_two_street_events_raise_the_tier_through_the_api(api):
+    """The evidence rule, end to end."""
+    from app.schemas import FloodReport
+    HOOKS["history_lookup"] = fake_history(reports=[
+        FloodReport(place_named="Ago Palace Way", match_level="street", event_date=d,
+                    publisher="P", url=f"https://example.test/{d}", quote="flooded",
+                    text_verified="true")
+        for d in ("2026-06-30", "2025-09-16")])
+    assessment_id = start(api)
+    drain(api, assessment_id)
+    a = api.get(f"/assessments/{assessment_id}").json()["assessment"]
+    assert a["street_flood_events"] == 2
+    # the invariant: two street-level events can never leave the tier below High. On this
+    # fixture the weighted score reaches High on its own, so tier_floor stays None -- it
+    # is set only when the rule actually had to raise the tier.
+    assert a["score"]["tier"] in ("High", "Severe")
+
+    from app.schemas import Tier
+    from app.scoring import apply_tier_floor
+    raised, why = apply_tier_floor(Tier.low, a["street_flood_events"])
+    assert raised == Tier.high and "street-level" in why

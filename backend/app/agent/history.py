@@ -26,7 +26,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -80,11 +80,16 @@ class Place:
     lga: str | None
     state: str = "Lagos"
     neighbourhood: str | None = None  # from the coarser lookup; often the name locals use
+    # What the loan officer typed. It widens the SEARCH only: OSM often lacks the street,
+    # and the officer knows the address. It is deliberately kept out of street_names, so
+    # match_level still rests on names the geocoder produced and scoring stays comparable
+    # with validation, which never has a typed address.
+    typed: str | None = None
 
     @property
     def names(self) -> list[str]:
         seen: list[str] = []
-        for n in (self.street, self.estate, self.neighbourhood, self.area, self.lga):
+        for n in (self.typed, self.street, self.estate, self.neighbourhood, self.area, self.lga):
             if n and flatten(n) not in {flatten(x) for x in seen}:
                 seen.append(n)
         return seen
@@ -105,8 +110,8 @@ class Place:
         return ", ".join(self.names + [self.state]) or self.state
 
     def key(self) -> str:
-        raw = "|".join(n or "" for n in (self.street, self.estate, self.neighbourhood,
-                                         self.area, self.lga, self.state))
+        raw = "|".join(n or "" for n in (self.typed, self.street, self.estate,
+                                         self.neighbourhood, self.area, self.lga, self.state))
         slug = re.sub(r"[^a-z0-9]+", "-", raw.casefold()).strip("-")[:60]
         return f"{slug or 'unknown'}-{hashlib.sha1(raw.encode()).hexdigest()[:8]}"
 
@@ -455,9 +460,15 @@ def _search_calls(resp: Any) -> int:
 
 def lookup(site: Site, client: Any | None = None, cache_dir: Path | None = None,
            place: Place | None = None, today: dt.date | None = None,
-           http: Any | None = None) -> FloodHistory:
-    """Flood history for one site. Cached per place, so neighbouring sites pay once."""
+           http: Any | None = None, address: str | None = None) -> FloodHistory:
+    """Flood history for one site. Cached per place, so neighbouring sites pay once.
+
+    `address` is what the loan officer typed. It joins the search terms but not the
+    match-level test: see Place.typed.
+    """
     place = place or reverse_geocode(site)
+    if address and address.strip():
+        place = replace(place, typed=address.strip())
     cache_dir = CACHE_DIR if cache_dir is None else cache_dir
     cached = cache_dir / f"{place.key()}.json"
     if cached.exists():

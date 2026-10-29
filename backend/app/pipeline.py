@@ -17,12 +17,20 @@ def assess(req: AssessmentRequest, source: LayerSource,
     network: without it the assessment is the area screen alone."""
     site = Site(req.lat, req.lon)
     layers = source.fetch(site, req.wet_date)
+    history = flood_history(site) if flood_history is not None else None
+    return assemble(req, layers, history)
+
+
+def assemble(req: AssessmentRequest, layers, history=None) -> Assessment:
+    """Build the Assessment from layers and history that are already in hand.
+
+    Split out of assess() so the API can run the area screen and the flood history at the
+    same time and still end up with exactly one definition of what an Assessment is.
+    """
     metrics = compute_metrics(layers)
-    history = None
-    if flood_history is not None:
+    if history is not None:
         from .agent.history import history_metric  # local: keeps the offline path import-free
-        history = flood_history(site)
-        found = history_metric(history) if history is not None else None
+        found = history_metric(history)
         if found is not None:
             metrics.append(found)
     s = score(metrics)

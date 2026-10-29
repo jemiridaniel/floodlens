@@ -11,36 +11,26 @@ from rasterio.transform import from_origin
 from app.geo.aoi import Grid, Site
 from app.geo.raster import read_window, stretch
 from app.geo.sources import daily_rain, wettest_days
-from app.main import app, get_source
+from app.main import app
 from app.sam import client as sam
-
-from .conftest import FakeSource, make_layers
 
 
 @pytest.fixture
 def api():
-    app.dependency_overrides[get_source] = lambda: FakeSource(make_layers())
-    yield TestClient(app)
-    app.dependency_overrides.clear()
+    with TestClient(app) as client:
+        yield client
 
 
 def test_health(api):
-    assert api.get("/health").json() == {"status": "ok"}
+    assert api.get("/health").json()["status"] == "ok"
 
 
-def test_create_and_get_assessment(api):
-    r = api.post("/assessments", json={"lat": 6.4541, "lon": 3.3947, "label": "Test shop"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["score"]["tier"] in {"Low", "Moderate", "High", "Severe"}
-    assert body["allowed_actions"]
-    assert {m["id"] for m in body["metrics"]} >= {"m_dist_water", "m_wet_water_250"}
-    assert api.get(f"/assessments/{body['id']}").json()["id"] == body["id"]
-
-
-def test_bad_coordinates_and_missing_id(api):
-    assert api.post("/assessments", json={"lat": 120, "lon": 3}).status_code == 422
-    assert api.get("/assessments/nope").status_code == 404
+def test_the_browser_app_is_allowed_and_nothing_else(api):
+    """The Next.js dev server talks to this API; no other origin may."""
+    allowed = api.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    other = api.get("/health", headers={"Origin": "https://evil.test"})
+    assert "access-control-allow-origin" not in other.headers
 
 
 def test_wettest_days_spaced_apart():

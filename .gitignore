@@ -13,6 +13,7 @@ venv/
 
 # data and outputs
 data/cache/
+data/uploads/
 out/
 *.tif
 *.png

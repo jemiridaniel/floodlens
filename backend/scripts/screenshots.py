@@ -72,7 +72,7 @@ def run_flow(page: Page, key: str, width_tag: str, photos: list[Path] | None = N
         except PWTimeout:
             print("    (finished too fast to catch the progress screen)")
 
-    page.wait_for_selector("text=What drives this score", timeout=420_000)
+    page.wait_for_selector("text=What drives this score", timeout=600_000)
     page.wait_for_timeout(1_200)
     shot(page, f"{key}-3-risk-report-{width_tag}")
     return assessment_id
@@ -107,7 +107,14 @@ def main() -> int:
                 passed &= check(page, "Okota: verified badge",
                                 "every number matches a measured value" in body)
                 passed &= check(page, "Okota: flood report cards", "Read the source" in body)
-                passed &= check(page, "Okota: evidence rule shown", "Evidence rule applied" in body)
+                passed &= check(page, "Okota: weighted score and floor both shown",
+                                "held at High by the evidence rule" in body
+                                and "Weighted score" in body)
+                passed &= check(page, "Okota: reports grouped by event",
+                                "2 reports" in body and "1 report" in body)
+                limits = body.split("What this report cannot tell you")[-1]
+                passed &= check(page, "Okota: one height limit only",
+                                limits.lower().count("height above") <= 1)
 
             if "lekki" in wanted:
                 run_flow(page, "lekki", tag)
@@ -118,6 +125,12 @@ def main() -> int:
                 passed &= check(page, "Lekki: no missing-evidence banner",
                                 "kind of evidence is missing" not in body
                                 and "Some evidence is missing" not in body)
+                limits = body.split("What this report cannot tell you")[-1]
+                passed &= check(page, "Lekki: one news-coverage limit only",
+                                sum(1 for w in ("news", "coverage") if w in limits.lower())
+                                and limits.lower().count("covers some") <= 1)
+                passed &= check(page, "Lekki: no duplicate limit bullets",
+                                body.count("This does not mean the site is safe.") <= 2)
 
             if "fresh" in wanted:
                 run_flow(page, "fresh", tag, photos=photos, catch_progress=True)

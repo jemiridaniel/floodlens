@@ -5,9 +5,11 @@ import {
   GROUP_BLURB,
   NO_STREET_REPORTS,
   type AssessmentView,
+  type EventGroup,
   type FloodReport,
   type GroupView,
   type MatchLevel,
+  metricText,
 } from "@/lib/types";
 import {
   Card,
@@ -60,9 +62,7 @@ function Metrics({ group }: { group: GroupView }) {
       {group.metrics.map((m, i) => (
         <li key={m.id} className={`flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5 ${i ? "border-t border-rule" : ""}`}>
           <span className="min-w-0 flex-1 text-sm">{m.label}</span>
-          <Mono className="text-sm font-semibold">
-            {m.value.toFixed(m.decimals)} {m.unit}
-          </Mono>
+          <Mono className="text-sm font-semibold">{metricText(m)}</Mono>
           {group.contributions[m.id] != null && (
             <Mono className="w-full text-xs text-muted sm:w-auto">
               +{group.contributions[m.id].toFixed(1)} pts
@@ -74,14 +74,32 @@ function Metrics({ group }: { group: GroupView }) {
   );
 }
 
+function EventCard({ group }: { group: EventGroup }) {
+  const n = group.reports.length;
+  return (
+    <section className="rounded-[12px] border border-line">
+      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule px-3.5 py-2.5">
+        <Mono className="text-sm font-semibold">{group.event_date}</Mono>
+        <span className="text-xs text-muted">
+          {n} {n === 1 ? "report" : "reports"}
+        </span>
+      </header>
+      <div className="flex flex-col gap-3 p-3.5">
+        {group.reports.map((r) => (
+          <ReportCard key={`${r.url}-${r.publisher}`} report={r} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ReportCard({ report }: { report: FloodReport }) {
   return (
-    <article className="rounded-[12px] border border-line p-3.5">
+    <article>
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MATCH_STYLE[report.match_level]}`}>
           {MATCH_WORDS[report.match_level]}
         </span>
-        <Mono className="text-xs text-muted">{report.event_date}</Mono>
         {report.text_verified === "unknown" && (
           <span className="rounded-full bg-rule px-2.5 py-0.5 text-xs text-muted">
             page could not be read
@@ -109,6 +127,58 @@ export function RiskReport({ view }: { view: AssessmentView }) {
   const report = view.report;
   const byId = Object.fromEntries(a.metrics.map((m) => [m.id, m]));
 
+  const layers = Object.values(view.water_layers);
+  const noWater = layers.length > 0 && layers.every((found) => !found);
+  const opticalCaption = view.optical_date
+    ? `, ${view.optical_date}${
+        view.optical_cloud_pct != null ? `, ${view.optical_cloud_pct.toFixed(0)}% cloud` : ""
+      }`
+    : "";
+
+  // One list, no repeats. The model paraphrases the standing limits in its own words, so
+  // matching on wording is not enough: both lists are bucketed by topic and the
+  // code-written line wins, because it is the precise one. The mandatory sentence is
+  // pinned first and never deduped away.
+  const TOPICS: [string, RegExp][] = [
+    ["height", /height above/i],
+    ["news", /news|coverage|reported|reports/i],
+    ["satellite", /satellit/i],
+  ];
+  const topicOf = (line: string) => TOPICS.find(([, re]) => re.test(line))?.[0] ?? "";
+
+  const standing: string[] = [];
+  if (a.score.missing.includes("m_height_above_water")) {
+    standing.push(
+      "Height above the nearest water: not applicable, no regular water within 1 km.",
+    );
+  }
+  standing.push(
+    "Satellite data can say whether an area is near rivers or the coast. It cannot tell a " +
+      "street that floods from one that does not: we measured that, and it was no better " +
+      "than guessing.",
+  );
+  standing.push(
+    "Local news covers some parts of Lagos far better than others, so finding no reports is " +
+      "weak evidence rather than a clean bill of health.",
+  );
+  for (const note of a.notes) if (note.startsWith("NO ")) standing.push(note);
+
+  const covered = new Set(standing.map(topicOf).filter(Boolean));
+  const required = (report?.caveats ?? []).filter((c) => c.includes(NO_STREET_REPORTS));
+  const fromAgent = (report?.caveats ?? []).filter(
+    (c) => !c.includes(NO_STREET_REPORTS) && !covered.has(topicOf(c)),
+  );
+
+  const seen = new Set<string>();
+  const limits: string[] = [];
+  for (const line of [...required, ...fromAgent, ...standing]) {
+    const k = line.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean)
+      .slice(0, 6).join(" ");
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    limits.push(line);
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <MissingEvidenceBanner groups={score.missing_groups} />
@@ -118,18 +188,28 @@ export function RiskReport({ view }: { view: AssessmentView }) {
           <Label>Flood risk</Label>
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <TierChip tier={score.tier} large />
-            <div>
-              <Mono className="text-2xl font-semibold">
-                {score.score.toFixed(1)}
-                <span className="text-base text-muted">/100</span>
-              </Mono>
-              <p className="text-xs text-muted">Confidence: {score.confidence}</p>
-            </div>
+            {!score.weighted_tier && (
+              <div>
+                <Mono className="text-2xl font-semibold">
+                  {score.score.toFixed(1)}
+                  <span className="text-base text-muted">/100</span>
+                </Mono>
+                <p className="text-xs text-muted">Confidence: {score.confidence}</p>
+              </div>
+            )}
           </div>
-          {score.tier_floor && (
-            <p className="mt-3 rounded-[10px] bg-tint px-3 py-2 text-sm text-ink">
-              <strong className="font-semibold">Evidence rule applied.</strong> {score.tier_floor}.
-            </p>
+          {score.weighted_tier && score.tier_floor && (
+            <>
+              <p className="mt-2 text-sm">
+                <Mono className="font-semibold">Weighted score {score.score.toFixed(1)}</Mono> (
+                {score.weighted_tier}) · held at {score.tier} by the evidence rule
+              </p>
+              <p className="mt-2 rounded-[10px] bg-tint px-3 py-2 text-sm text-ink">
+                <strong className="font-semibold">Why:</strong> {score.tier_floor}. Direct
+                evidence that this street floods outranks the weighted measurements.
+              </p>
+              <p className="mt-1 text-xs text-muted">Confidence: {score.confidence}</p>
+            </>
           )}
         </div>
         <div className="flex-1 border-t border-rule pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0">
@@ -188,10 +268,10 @@ export function RiskReport({ view }: { view: AssessmentView }) {
             {NO_STREET_REPORTS}
           </p>
         ) : null}
-        {view.reports.length > 0 && (
+        {view.report_groups.length > 0 && (
           <div className="mt-3 flex flex-col gap-3">
-            {view.reports.map((r) => (
-              <ReportCard key={`${r.url}-${r.event_date}`} report={r} />
+            {view.report_groups.map((g) => (
+              <EventCard key={g.event_date} group={g} />
             ))}
           </div>
         )}
@@ -245,36 +325,65 @@ export function RiskReport({ view }: { view: AssessmentView }) {
 
       <Card aria-label="Evidence images">
         <h2 className="text-base font-semibold">Evidence</h2>
-        <div className="mt-3 grid gap-4 sm:grid-cols-2">
-          {Object.entries(view.evidence_urls)
-            .filter(([name]) => name in EVIDENCE_CAPTION)
-            .map(([name, url]) => (
-              <figure key={name}>
+        {noWater ? (
+          <p className="mt-2 text-sm text-muted">
+            None of the three water layers — Sentinel-2 on a clear date, Sentinel-1 radar on
+            the wettest recent date, and JRC water history since 1984 — found any water
+            within 1 km of this site, so there is nothing to show on a map.
+          </p>
+        ) : (
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            {view.evidence_urls.water_overlay && (
+              <figure className="sm:col-span-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={url} alt={EVIDENCE_CAPTION[name]} className="w-full rounded-[12px] border border-line" />
+                <img
+                  src={view.evidence_urls.water_overlay}
+                  alt="Satellite view with detected water shaded blue"
+                  className="w-full rounded-[12px] border border-line"
+                />
                 <figcaption className="mt-1.5 text-xs text-muted">
-                  {EVIDENCE_CAPTION[name]}
-                  {MASK_VIEWS.has(name) ? " · white is water, black is none" : ""}
+                  Water found by any layer, shaded blue on the satellite view{opticalCaption}
                 </figcaption>
               </figure>
-            ))}
-        </div>
+            )}
+            {view.evidence_urls.optical && !view.evidence_urls.water_overlay && (
+              <figure className="sm:col-span-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={view.evidence_urls.optical}
+                  alt="Satellite view of the site"
+                  className="w-full rounded-[12px] border border-line"
+                />
+                <figcaption className="mt-1.5 text-xs text-muted">
+                  Satellite view{opticalCaption}
+                </figcaption>
+              </figure>
+            )}
+            {Object.entries(view.water_layers)
+              .filter(([name, hasWater]) => hasWater && view.evidence_urls[name])
+              .map(([name]) => (
+                <figure key={name}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={view.evidence_urls[name]}
+                    alt={EVIDENCE_CAPTION[name]}
+                    className="w-full rounded-[12px] border border-line"
+                  />
+                  <figcaption className="mt-1.5 text-xs text-muted">
+                    {EVIDENCE_CAPTION[name]} · white is water, black is none
+                  </figcaption>
+                </figure>
+              ))}
+          </div>
+        )}
       </Card>
 
       <Card aria-label="Limits">
         <h2 className="text-base font-semibold">What this report cannot tell you</h2>
         <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted">
-          {report?.caveats.map((c) => <li key={c}>{c}</li>)}
-          <li>
-            Satellite data screens the <em>area</em> for coastal and river flooding. It cannot
-            tell a flooding street from a dry one: that was measured, and it performed no
-            better than chance.
-          </li>
-          <li>
-            News coverage is uneven across Lagos, so finding no reports is weak evidence, not
-            a clean bill of health.
-          </li>
-          {a.notes.filter((n) => n.startsWith("NO ")).map((n) => <li key={n}>{n}</li>)}
+          {limits.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
         </ul>
         <p className="mt-3 text-xs text-muted">
           <Mono>{coords(a.lat, a.lon)}</Mono>

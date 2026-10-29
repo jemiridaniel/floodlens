@@ -29,9 +29,16 @@ class Metric(BaseModel):
     unit: str
     source: str
     decimals: int = 1
+    # How a reader should see this number when the bare figure would mislead: a distance
+    # that saturated at the edge of what we looked at is "more than 1 km", not "1000 m".
+    # The value stays the number the formula used.
+    display_value: str | None = None
 
     def display(self) -> str:
         return f"{self.value:.{self.decimals}f}"
+
+    def shown(self) -> str:
+        return self.display_value or f"{self.display()} {self.unit}".strip()
 
 
 class Score(BaseModel):
@@ -42,6 +49,7 @@ class Score(BaseModel):
     missing: list[str]
     missing_groups: list[str] = []  # whole kinds of evidence absent; forces confidence low
     tier_floor: str | None = None  # set when an evidence rule raised the tier above the score
+    weighted_tier: Tier | None = None  # the tier the score alone would give, when it differs
 
 
 class AssessmentRequest(BaseModel):

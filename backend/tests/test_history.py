@@ -553,12 +553,20 @@ def test_a_search_that_runs_long_returns_what_is_verified_with_a_note(monkeypatc
         def _create(self, **kwargs):
             import time
             if len(self.requests) >= 1:
-                time.sleep(4)  # the second name is still going when the clock runs out
+                # Long enough that a blocking shutdown would be obvious, short enough that
+                # the abandoned thread does not hold up interpreter exit (concurrent.futures
+                # joins its workers at exit, so a very long sleep would hang the suite).
+                time.sleep(8)
             return super()._create(**kwargs)
 
+    import time as _time
     client = Slow(*[turn([report()], cited_urls=[CITED]) for _ in range(4)])
+    t0 = _time.monotonic()
     h = H.lookup(Site(6.5, 3.3), client=client, place=place, today=TODAY, cache_dir=_tmp(),
                  http=FakeHttp({CITED: Page(ARTICLE)}))
+    # the deadline must bound the call, not merely be recorded after the fact: a blocking
+    # pool shutdown would wait out the full 60s here
+    assert _time.monotonic() - t0 < 4, "the search deadline did not actually bound the wait"
     assert h.stopped_early is True
     assert any("stopped early at the time limit" in d for d in h.dropped)
     assert h.searched is True and len(h.reports) == 1  # what did come back is kept

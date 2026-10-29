@@ -133,8 +133,7 @@ def apply_tier_floor(tier: Tier, street_events: int) -> tuple[Tier, str | None]:
     if TIER_ORDER.index(tier) >= TIER_ORDER.index(TIER_FLOOR):
         return tier, None
     return TIER_FLOOR, (f"{street_events} distinct street-level flood events in the last "
-                        f"{YEARS} years, so the tier is held at {TIER_FLOOR.value} "
-                        f"whatever the weighted score says")
+                        f"{YEARS} years")
 
 
 def score(metrics: list[Metric], street_events: int = 0) -> Score:
@@ -145,7 +144,8 @@ def score(metrics: list[Metric], street_events: int = 0) -> Score:
     if total_w == 0:
         tier, floor = apply_tier_floor(Tier.low, street_events)
         return Score(score=0, tier=tier, confidence="low", contributions={}, missing=missing,
-                     missing_groups=list(GROUPS), tier_floor=floor)
+                     missing_groups=list(GROUPS), tier_floor=floor,
+                     weighted_tier=Tier.low if floor else None)
 
     contributions = {
         f.metric_id: round(100 * f.weight / total_w * f.risk(by_id[f.metric_id].value), 1) for f in present
@@ -158,6 +158,8 @@ def score(metrics: list[Metric], street_events: int = 0) -> Score:
     gone = [g for g, ids in GROUPS.items() if all(i in missing for i in ids)]
     if gone:
         confidence = "low"
-    tier, floor = apply_tier_floor(tier_for(value), street_events)
+    weighted = tier_for(value)
+    tier, floor = apply_tier_floor(weighted, street_events)
     return Score(score=value, tier=tier, confidence=confidence, contributions=contributions,
-                 missing=missing, missing_groups=gone, tier_floor=floor)
+                 missing=missing, missing_groups=gone, tier_floor=floor,
+                 weighted_tier=weighted if floor else None)

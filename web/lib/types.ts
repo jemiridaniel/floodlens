@@ -32,6 +32,15 @@ export interface Metric {
   unit: string;
   source: string;
   decimals: number;
+  /** Set when the bare number would mislead: "more than 1 km" for a distance that
+   *  saturated, "1.0 m lower than the surrounding ground" for a signed difference. */
+  display_value: string | null;
+}
+
+/** What a reader should see for a metric. */
+export function metricText(m: Metric): string {
+  if (m.display_value) return m.display_value;
+  return `${m.value.toFixed(m.decimals)} ${m.unit}`.trim();
 }
 
 export interface Score {
@@ -45,6 +54,8 @@ export interface Score {
   missing_groups: string[];
   /** Set when the street-level evidence rule held the tier above the weighted score. */
   tier_floor: string | null;
+  /** The tier the weighted score alone would give. Only set when the rule raised it. */
+  weighted_tier: Tier | null;
 }
 
 export interface Assessment {
@@ -87,6 +98,11 @@ export interface Report {
   /** false = the model never produced a report the verifier accepted, and this is the
    *  metrics-only fallback. The badge must reflect it. */
   explained: boolean;
+}
+
+export interface EventGroup {
+  event_date: string;
+  reports: FloodReport[];
 }
 
 export interface GroupView {
@@ -133,7 +149,13 @@ export interface AssessmentView {
   assessment: Assessment | null;
   groups: GroupView[];
   reports: FloodReport[];
+  report_groups: EventGroup[];
   photos: PhotoView[];
+  optical_date: string | null;
+  optical_cloud_pct: number | null;
+  /** layer name -> whether it found any water within 1 km. All false means the three
+   *  mask images are blank squares, and one sentence says more than three of those. */
+  water_layers: Record<string, boolean>;
   report: Report | null;
   run: AgentRun | null;
   evidence_urls: Record<string, string>;

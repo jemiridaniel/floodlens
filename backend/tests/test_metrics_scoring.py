@@ -152,15 +152,20 @@ def test_low_spot_is_negative_in_a_dip(layers):
     layers.dem[90:110, 90:110] = 7.5  # a 200 m dip centred on the site
     m = by_id(compute_metrics(layers))
     assert m["m_local_low_spot"].value == pytest.approx(-2.5)
-    assert "negative = a dip" in m["m_local_low_spot"].label
+    # the sign is the whole point, so the reader gets a sentence rather than "-2.5 m"
+    assert m["m_local_low_spot"].display_value == "2.5 m lower than the surrounding ground"
 
 
 def test_low_spot_is_zero_on_flat_ground_and_positive_on_a_rise(layers):
     import numpy as np
     layers.dem = np.full_like(layers.dem, 10.0)
     assert by_id(compute_metrics(layers))["m_local_low_spot"].value == pytest.approx(0.0)
+    assert by_id(compute_metrics(layers))["m_local_low_spot"].display_value == (
+        "level with the surrounding ground")
     layers.dem[90:110, 90:110] = 13.0  # the site sits on a rise instead
-    assert by_id(compute_metrics(layers))["m_local_low_spot"].value == pytest.approx(3.0)
+    high = by_id(compute_metrics(layers))["m_local_low_spot"]
+    assert high.value == pytest.approx(3.0)
+    assert high.display_value == "3.0 m higher than the surrounding ground"
 
 
 def test_low_spot_risk_ramp():

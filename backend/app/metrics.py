@@ -83,6 +83,8 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
             seen = "JRC Global Surface Water and Sentinel-2" if regular_water is not None else "Sentinel-2"
             out.append(Metric(id="m_dist_water", label=f"No regular water within {edge_m / 1000:g} km",
                               value=edge_m, unit="m", decimals=0,
+                              # the number is a floor, not a measurement: say so
+                              display_value=f"more than {edge_m / 1000:g} km",
                               source=f"{seen}: no water in the {g.size_m / 1000:g} km grid"))
         else:
             out.append(Metric(id="m_dist_water", label="Distance to nearest regular water", value=d, unit="m",
@@ -98,10 +100,13 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
     if layers.dem is not None:
         low = w.low_spot_m(layers.dem, ring_mask(g, GROUND_RADIUS_M), ring_mask(g, NEIGHBOURHOOD_M))
         if low is not None:
+            # "-1.0 m" needs a sentence to be read correctly; the sign is the whole point.
+            where = "level with" if abs(low) < 0.05 else ("lower than" if low < 0 else "higher than")
+            shown = ("level with the surrounding ground" if where == "level with"
+                     else f"{abs(low):.1f} m {where} the surrounding ground")
             out.append(Metric(
-                id="m_local_low_spot", value=low, unit="m",
-                label=f"Ground at the site against the median within {NEIGHBOURHOOD_M / 1000:g} km "
-                      "(negative = a dip)",
+                id="m_local_low_spot", value=low, unit="m", display_value=shown,
+                label=f"Ground at the site against the median within {NEIGHBOURHOOD_M / 1000:g} km",
                 source=f"Copernicus DEM GLO-30, {GROUND_RADIUS_M} m low point vs the surrounding median"))
 
     if layers.landcover is not None:

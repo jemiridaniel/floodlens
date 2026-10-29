@@ -10,6 +10,11 @@ Rules:
 4. The recommended action must be allowed for that tier.
 5. Any required sentence must appear verbatim. This is how the "no street-level flood
    reports" caveat is made non-optional rather than left to the model's judgement.
+6. When an evidence rule raised the tier above the weighted score, the report may not
+   write as though the score earned it. "Scores 42.5 and is High tier" is false: 42.5 is
+   Moderate, and the tier came from two verified street-level floods. A reader who
+   believes the score produced the tier will mistrust the number or the tier, and both
+   are right.
 """
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ class Verdict:
     errors: list[str] = field(default_factory=list)
 
 
-def _numbers(text: str) -> list[float]:
+def numbers(text: str) -> list[float]:
     out = []
     for tok in NUMBER.findall(text):
         try:
@@ -48,6 +53,40 @@ def _matches(x: float, allowed: list[tuple[float, int]]) -> bool:
     return False
 
 
+SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
+# Phrases that show a sentence is attributing the tier to the rule rather than the score.
+FLOOR_LANGUAGE = re.compile(r"held at|evidence rule|raised to|floor", re.I)
+
+
+def floored_tier_errors(text: str, score: Score) -> list[str]:
+    """Catch text that credits the weighted score with a tier the evidence rule set.
+
+    A sentence naming both the score and the floored tier is only wrong if it reads as
+    though one produced the other. "Weighted score 42.5 (Moderate), held at High by the
+    evidence rule" names both and is exactly right, so a sentence that also names the
+    lower tier the score really gives, or that says where the tier came from, is left
+    alone. Only "scores 42.5 and is High tier" is the error.
+    """
+    if not score.tier_floor or score.weighted_tier is None:
+        return []
+    tier = re.compile(rf"\b{score.tier.value}\b", re.I)
+    weighted = re.compile(rf"\b{score.weighted_tier.value}\b", re.I)
+    figure = re.compile(rf"(?<![\d.]){re.escape(f'{score.score:g}')}(?![\d])")
+    errors = []
+    for sentence in SENTENCE.split(" ".join(text.split())):
+        if not (tier.search(sentence) and figure.search(sentence)):
+            continue
+        if weighted.search(sentence) or FLOOR_LANGUAGE.search(sentence):
+            continue  # the sentence says where the tier came from: that is the right form
+        errors.append(
+            f"this sentence credits the score with the tier, but {score.score:g} is "
+            f"{score.weighted_tier.value} and the tier was held at {score.tier.value} by "
+            f"the evidence rule: {sentence.strip()!r}")
+    return errors
+
+
 def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Score,
            extra_allowed: set[float] | None = None, required: list[str] | None = None) -> Verdict:
     errors: list[str] = []
@@ -55,6 +94,7 @@ def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Scor
     for phrase in required or []:
         if " ".join(phrase.split()) not in flat:
             errors.append(f"the report must contain this sentence exactly: {phrase!r}")
+    errors += floored_tier_errors(text, score)
     allowed = [(m.value, m.decimals) for m in metrics] + [(score.score, 1)]
     ok_set = ALWAYS_OK | (extra_allowed or set())
 
@@ -66,7 +106,7 @@ def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Scor
         if d not in measured_dates:
             errors.append(f"date {d} is not in any measured metric")
 
-    for x in _numbers(DATE.sub(" ", text)):
+    for x in numbers(DATE.sub(" ", text)):
         if x in ok_set or (1900 <= x <= 2100 and x.is_integer()):
             continue
         if not _matches(x, allowed):

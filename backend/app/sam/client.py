@@ -18,6 +18,8 @@ from PIL import Image
 
 from ..config import META_BASE_URL, get_settings
 
+REQUEST_TIMEOUT_S = 120  # a segmentation that stalls must not hold up an assessment
+
 
 @dataclass
 class Segmentation:
@@ -86,7 +88,8 @@ async def segment(image: np.ndarray | Image.Image, prompt: str, api: AsyncOpenAI
     if own:
         if not settings.model_api_key:
             raise RuntimeError("MODEL_API_KEY is not set")
-        api = AsyncOpenAI(base_url=META_BASE_URL, api_key=settings.model_api_key)
+        api = AsyncOpenAI(base_url=META_BASE_URL, api_key=settings.model_api_key,
+                          timeout=REQUEST_TIMEOUT_S, max_retries=1)
     arr = np.asarray(image)
     try:
         stream = await api.responses.create(

@@ -222,7 +222,7 @@ def test_tools_offer_only_available_evidence(assessment):
     tools = {t["name"]: t for t in client.requests[0]["tools"]}
     assert set(tools) == {"get_metrics", "view_evidence", "submit_report"}
     assert tools["view_evidence"]["parameters"]["properties"]["name"]["enum"] == [
-        "optical", "water_history", "water_now"]
+        "optical", "water_history", "water_now", "water_overlay"]
     assert tools["submit_report"]["parameters"]["properties"]["action"]["enum"] == [
         a.value for a in assessment.allowed_actions]
 

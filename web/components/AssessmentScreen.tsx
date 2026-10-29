@@ -40,28 +40,42 @@ export function AssessmentScreen({ id }: { id: string }) {
     }
   }, [id]);
 
+  const [settled, setSettled] = useState(false);
+
   useEffect(() => {
     let live = true;
-    const stop = watchAssessment(
-      id,
-      (event) => {
-        if (!live) return;
-        if (event.type === "step") {
-          // Keyed by step name, never by arrival order: a reconnecting phone replays the
-          // whole backlog, and a cached run sends every step already `done`.
-          setSteps((prev) => ({ ...prev, [event.step]: event }));
+    let stop = () => {};
+
+    const subscribe = () => {
+      stop = watchAssessment(
+        id,
+        (event) => {
+          if (!live) return;
+          if (event.type === "step") {
+            // Keyed by step name, never by arrival order: a reconnecting phone replays
+            // the whole backlog, and a cached run sends every step already `done`.
+            setSteps((prev) => ({ ...prev, [event.step]: event }));
+          }
           setCost((c) => Math.max(c, event.cost_usd));
-        } else {
-          setCost((c) => Math.max(c, event.cost_usd));
-        }
-      },
-      (status, streamError) => {
-        if (!live) return;
-        if (streamError) setError(streamError);
-        void load();
-      },
-    );
-    void load(); // also covers the case where the job finished before this page opened
+          if (event.type === "done") setSettled(true);
+        },
+        (status, streamError) => {
+          if (!live) return;
+          if (streamError) setError(streamError);
+          if (status === "disconnected") {
+            // The stream dropped before the job finished. Reconnect, because the only
+            // other outcome is a page that sits on "Working on it" forever.
+            setTimeout(() => live && subscribe(), 2000);
+          } else {
+            setSettled(true);
+          }
+          void load();
+        },
+      );
+    };
+
+    subscribe();
+    void load(); // also covers a job that finished before this page opened
     return () => {
       live = false;
       stop();
@@ -69,6 +83,14 @@ export function AssessmentScreen({ id }: { id: string }) {
   }, [id, load]);
 
   const finished = view?.status === "done" || view?.status === "failed";
+
+  // Belt and braces: poll while the job is unfinished. The event stream is the fast path,
+  // not the only path, so a dropped connection costs a few seconds rather than the report.
+  useEffect(() => {
+    if (finished) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [finished, load, settled]);
 
   useEffect(() => {
     if (finished) return;

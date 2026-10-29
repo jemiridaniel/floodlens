@@ -434,6 +434,21 @@ def distinct_events(reports: list[FloodReport]) -> list[tuple[str, float]]:
     return events
 
 
+def group_events(reports: list[FloodReport]) -> list[tuple[str, list[FloodReport]]]:
+    """Reports grouped into the events they describe, newest first.
+
+    Same rule as distinct_events (reports within SAME_EVENT_DAYS are one flood), kept in
+    one place so the report a reader sees is grouped exactly as the score counted it.
+    """
+    groups: list[tuple[str, list[FloodReport]]] = []
+    for r in sorted(reports, key=lambda r: r.event_date):
+        if groups and abs((_as_date(r.event_date) - _as_date(groups[-1][0])).days) <= SAME_EVENT_DAYS:
+            groups[-1][1].append(r)
+        else:
+            groups.append((r.event_date, [r]))
+    return list(reversed(groups))
+
+
 def history_metric(history: FloodHistory) -> Metric | None:
     """m_reported_floods: weighted distinct flood events in the last YEARS_BACK years.
 
@@ -459,6 +474,8 @@ def history_metric(history: FloodHistory) -> Metric | None:
         label=f"Flooding reported here in news, last {YEARS_BACK} years (weighted by how closely "
               "the place matches)",
         value=total, unit="events",
+        # whole counts read as counts; a part-weighted total keeps its decimal
+        decimals=0 if float(total).is_integer() else 1,
         source=f"Meta web search over news, verified against citations: {detail}. "
                "Absence is weak evidence: news covers some areas far better than others.")
 
@@ -627,7 +644,13 @@ def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = No
     deadline = time.monotonic() + SEARCH_DEADLINE_S
     stopped_early = False
     try:
-        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        # NOT a `with` block. ThreadPoolExecutor.__exit__ calls shutdown(wait=True), which
+        # blocks until every running thread finishes, and Future.cancel() does nothing to a
+        # thread that has already started. Together those made this deadline decorative:
+        # the real bound was the slowest model call, and one slow search held a whole
+        # assessment at "Working on it" for minutes. Abandoning the stragglers is the point.
+        pool = ThreadPoolExecutor(max_workers=len(names))
+        try:
             futures = {pool.submit(_search_one, n, place, client, settings.spark_model, since): n
                        for n in names}
             done, pending = wait(futures, timeout=max(1.0, deadline - time.monotonic()))
@@ -649,6 +672,8 @@ def _ask(place: Place, client: Any | None, today: dt.date, http: Any | None = No
                 out.output_tokens += got.output_tokens
                 if got.error:
                     out.dropped.append(got.error)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         if not done:
             out.dropped.append("no search finished before the limit")

@@ -31,7 +31,7 @@ from ..config import META_BASE_URL, get_settings
 from ..evidence import VIEW_HELP, data_url, evidence_pngs
 from ..geo.sources import SiteLayers
 from ..schemas import Action, AgentRun, AgentStep, Assessment, Driver, Report, Tier
-from .verifier import verify
+from .verifier import numbers, verify
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +39,11 @@ log = logging.getLogger(__name__)
 # all. The verifier enforces it, so it cannot be softened or dropped by the model.
 NO_STREET_REPORTS = ("No street-level flood reports found. This does not mean the site is safe.")
 
-MAX_MODEL_CALLS = 8
+# The task is: read the metrics, maybe look at one image, submit. Three calls is plenty,
+# and the cap is what bounds the worst case: at eight calls with an SDK retry each, a slow
+# run reached half an hour and the stage ceiling cancelled it with nothing written.
+REQUEST_TIMEOUT_S = 90  # the SDK default is 600s, with retries on top
+MAX_MODEL_CALLS = 4
 MAX_VERIFY_ATTEMPTS = 2  # one submission, then one retry carrying the verifier's errors
 DETAIL_CHARS = 160  # steps are for display: keep each result short
 
@@ -81,6 +85,16 @@ Rules, enforced by a verifier that will reject your report:
    officer, not a scientist. Say plainly what is uncertain.
 6. If you are told a required sentence is missing, put it in a caveat word for word. It is
    there because absence of news is not evidence of safety, and it is not optional.
+7. Write about evidence, not arithmetic. Say what was measured, where and when: "flooding
+   on this street was reported by three outlets in June 2026", "the ground here sits 1.0 m
+   lower than the land around it", "no regular water within 1 km". Never explain a verdict
+   by how many points something contributed; a loan officer cannot check points, and can
+   check a date, a place and a measurement.
+8. If get_metrics shows tier_was_held_by_an_evidence_rule, the score did NOT earn the
+   tier. Copy that block's how_to_say_it sentence into your summary word for word, then
+   explain the flooding it refers to. Never write that the site "scores X and is <tier>"
+   in one breath: X belongs to the lower tier the score alone gives, and saying otherwise
+   is rejected.
 """
 
 
@@ -160,11 +174,22 @@ def _tools(views: list[str], allowed: list[Action]) -> list[dict[str, Any]]:
 def metrics_payload(assessment: Assessment) -> dict[str, Any]:
     """What get_metrics returns: the measured facts, and nothing else."""
     s = assessment.score
+    floored = None
+    if s.tier_floor and s.weighted_tier is not None:
+        floored = {
+            "weighted_score": s.score,
+            "tier_the_score_alone_gives": s.weighted_tier.value,
+            "tier_after_the_rule": s.tier.value,
+            "because": s.tier_floor,
+            "how_to_say_it": (f"Weighted score {s.score:g} ({s.weighted_tier.value}), held at "
+                              f"{s.tier.value} by the evidence rule: {s.tier_floor}."),
+        }
     return {
         "site": {"lat": assessment.lat, "lon": assessment.lon, "label": assessment.label},
+        "tier_was_held_by_an_evidence_rule": floored,
         "metrics": [
             {
-                "id": m.id, "label": m.label, "value": m.display(), "unit": m.unit, "source": m.source,
+                "id": m.id, "label": m.label, "value": m.shown(), "unit": m.unit, "source": m.source,
                 "contribution_points": s.contributions.get(m.id, 0.0),
                 "in_score": m.id in s.contributions,
             }
@@ -182,10 +207,20 @@ def metrics_payload(assessment: Assessment) -> dict[str, Any]:
 def allowed_numbers(assessment: Assessment) -> set[float]:
     """Code-computed numbers the report may quote beyond the metric values themselves.
 
-    Only the score and each metric's contribution. Dates are handled separately and as
-    whole tokens by the verifier, so nothing else from the labels or sources is admitted.
+    The score, each metric's contribution, and the numbers inside any display_value.
+    Those last ones are code-written phrasings the report is meant to quote ("more than
+    1 km", "1.0 m lower than the surrounding ground"), so rejecting them would punish the
+    model for saying exactly what it was told to say. Dates are handled separately and as
+    whole tokens by the verifier; nothing else from the labels or sources is admitted.
     """
-    return {float(v) for v in assessment.score.contributions.values()} | {float(assessment.score.score)}
+    stated = {float(v) for v in assessment.score.contributions.values()}
+    stated.add(float(assessment.score.score))
+    for m in assessment.metrics:
+        stated.update(numbers(m.display_value or ""))
+    # The tier-floor sentence is written by the code and the report is told to quote it,
+    # so its numbers ("2 distinct ... in the last 5 years") must not read as invented.
+    stated.update(numbers(assessment.score.tier_floor or ""))
+    return stated
 
 
 TIER_CLAIM = "(?:{t})\\b(?:\\s+flood)?\\s+(?:risk|tier)|(?:risk|tier)\\s*(?:is|:)?\\s*(?:{t})\\b"
@@ -311,7 +346,8 @@ def explain(assessment: Assessment, layers: SiteLayers | None = None, client: An
         settings = get_settings()
         if not settings.model_api_key:
             raise RuntimeError("MODEL_API_KEY is not set")
-        client = OpenAI(base_url=META_BASE_URL, api_key=settings.model_api_key)
+        client = OpenAI(base_url=META_BASE_URL, api_key=settings.model_api_key,
+                        timeout=REQUEST_TIMEOUT_S, max_retries=0)
     try:
         run = _run(client, assessment, pngs, max_calls)
     finally:

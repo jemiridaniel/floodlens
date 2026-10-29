@@ -83,3 +83,59 @@ def test_a_required_sentence_tolerates_line_wrapping_only():
     reworded = verify("No street-level flood reports were found; that is not a guarantee.",
                       "High", "approve_with_insurance", METRICS, SCORE, required=[phrase])
     assert not reworded.ok  # paraphrase is not enough
+
+
+# ------------------------------------------- the floored tier may not be credited to the score
+FLOORED = Score(score=42.5, tier=Tier.high, confidence="high", contributions={}, missing=[],
+                tier_floor="2 distinct street-level flood events in the last 5 years",
+                weighted_tier=Tier.moderate)
+
+
+def test_a_report_may_not_say_the_score_earned_a_floored_tier():
+    """42.5 is Moderate. The tier came from two verified floods, not from the arithmetic."""
+    v = verify("This site scores 42.5 and is High tier.", "High", "approve_with_insurance",
+               METRICS, FLOORED)
+    assert not v.ok
+    assert any("credits the score with the tier" in e for e in v.errors)
+    assert any("42.5 is Moderate" in e for e in v.errors)
+
+
+def test_the_two_may_be_stated_in_separate_sentences():
+    good = ("The weighted score is 42.5, which on its own is Moderate. The tier is held at "
+            "High because flooding was reported on this street twice.")
+    assert verify(good, "High", "approve_with_insurance", METRICS, FLOORED).ok
+
+
+def test_the_rule_is_silent_when_no_floor_was_applied():
+    plain = Score(score=58.4, tier=Tier.high, confidence="high", contributions={}, missing=[])
+    assert verify("This site scores 58.4 and is High tier.", "High", "approve_with_insurance",
+                  METRICS, plain).ok
+
+
+def test_the_rule_only_fires_on_the_floored_tier_word():
+    """Mentioning the score beside a different tier word is not the error we are catching."""
+    v = verify("The weighted score of 42.5 sits in the Moderate band.", "High",
+               "approve_with_insurance", METRICS, FLOORED)
+    assert v.ok, v.errors
+
+
+def test_the_prescribed_sentence_is_accepted():
+    """The one form the agent is told to use must not be the one the rule rejects."""
+    prescribed = ("Weighted score 42.5 (Moderate), held at High by the evidence rule: "
+                  "2 distinct street-level flood events in the last 5 years.")
+    v = verify(prescribed, "High", "approve_with_insurance", METRICS, FLOORED,
+               extra_allowed={2.0, 5.0})
+    assert v.ok, v.errors
+
+
+def test_naming_where_the_tier_came_from_is_enough():
+    for ok in ("The tier is held at High even though the weighted score is 42.5.",
+               "Scoring 42.5, this site is raised to High by the evidence rule.",
+               "A weighted 42.5 would be Moderate; the floor puts it at High."):
+        assert verify(ok, "High", "approve_with_insurance", METRICS, FLOORED).ok, ok
+
+
+def test_the_bare_claim_is_still_rejected():
+    v = verify("This site scores 42.5 and is High tier.", "High", "approve_with_insurance",
+               METRICS, FLOORED)
+    assert not v.ok and any("credits the score" in e for e in v.errors)

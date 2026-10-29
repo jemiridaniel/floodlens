@@ -1,6 +1,7 @@
 """FloodLens API: start an assessment, watch it run, read the result."""
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Annotated
@@ -30,6 +31,7 @@ _jobs: dict[str, J.Job] = {}  # swapped for Postgres later
 # Test seams. Empty in production, where run_job reaches for the real source, the real
 # search and the real agent. Tests fill these in so nothing touches the network.
 HOOKS: dict[str, object] = {}
+HEARTBEAT_S = 15  # keeps an idle SSE connection alive through the long steps
 
 
 def _get(assessment_id: str) -> J.Job:
@@ -90,10 +92,35 @@ async def assessment_events(assessment_id: str, request: Request) -> StreamingRe
     job = _get(assessment_id)
 
     async def stream():
-        async for event in job.stream():
-            if await request.is_disconnected():
-                return
-            yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+        # A heartbeat during the quiet stretches. The explain step can run 45 s without
+        # producing an event, which is long enough for an idle connection to be dropped
+        # by a phone network or any proxy in between.
+        beat = asyncio.create_task(asyncio.sleep(0))
+        events = job.stream().__aiter__()
+        pending: asyncio.Task | None = None
+        try:
+            while True:
+                if pending is None:
+                    pending = asyncio.create_task(events.__anext__())
+                done, _ = await asyncio.wait({pending}, timeout=HEARTBEAT_S)
+                if await request.is_disconnected():
+                    return
+                if not done:
+                    yield ": keep-alive\n\n"
+                    continue
+                try:
+                    event = pending.result()
+                finally:
+                    pending = None
+                yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                if event["type"] == "done":
+                    return
+        except StopAsyncIteration:
+            return
+        finally:
+            beat.cancel()
+            if pending is not None:
+                pending.cancel()
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache, no-transform",

@@ -363,3 +363,69 @@ def test_the_fingerprint_moves_with_the_scoring_rules(monkeypatch):
     before = J.scoring_fingerprint()
     monkeypatch.setattr(scoring, "TIER_FLOOR_STREET_EVENTS", 3)
     assert J.scoring_fingerprint() != before
+
+
+def test_a_stage_that_hangs_costs_one_stage_not_the_assessment(api, monkeypatch):
+    """A slow search must never hold an officer at 'Working on it' indefinitely."""
+    import asyncio
+
+    monkeypatch.setitem(J.STAGE_LIMIT_S, J.HISTORY, 1)
+
+    def never_returns(site, address=None, **kw):
+        import time
+        time.sleep(30)
+
+    HOOKS["history_lookup"] = never_returns
+    assessment_id = start(api)
+    events = drain(api, assessment_id)
+
+    assert events[-1]["type"] == "done" and events[-1]["status"] == "done"
+    history = next(e for e in events if e.get("step") == J.HISTORY and e["status"] != "running")
+    assert history["status"] == "failed" and "gave up after 1s" in history["detail"]
+
+    body = api.get(f"/assessments/{assessment_id}").json()
+    assert body["assessment"] is not None  # the area screen still produced a score
+    assert "local history" in body["assessment"]["score"]["missing_groups"]
+    assert body["assessment"]["score"]["confidence"] == "low"
+    assert asyncio  # the stage ceiling is asyncio.wait_for, not a thread join
+
+
+def test_a_failed_explain_still_leaves_a_usable_report(api):
+    """The score is valid whatever happened to the agent. An officer must never be shown
+    a tier with no summary, no action and no badge."""
+    def boom(assessment, layers=None, **kw):
+        raise RuntimeError("the model is down")
+
+    HOOKS["explain"] = boom
+    assessment_id = start(api)
+    events = drain(api, assessment_id)
+    assert events[-1]["status"] == "done"
+
+    body = api.get(f"/assessments/{assessment_id}").json()
+    report = body["report"]
+    assert report is not None
+    assert report["explained"] is False  # and the badge says so
+    assert report["action"] in body["assessment"]["allowed_actions"]
+    assert report["summary"]
+    assert any("the model is down" in c for c in report["caveats"])
+    verify_step = next(s for s in body["steps"] if s["step"] == "Verify")
+    assert verify_step["status"] in ("skipped", "failed")
+
+
+def test_an_explain_that_overruns_still_leaves_a_report(api, monkeypatch):
+    monkeypatch.setitem(J.STAGE_LIMIT_S, J.EXPLAIN, 1)
+
+    def slow(assessment, layers=None, **kw):
+        import time
+        time.sleep(20)
+
+    HOOKS["explain"] = slow
+    assessment_id = start(api)
+    events = drain(api, assessment_id)
+    assert events[-1]["status"] == "done"
+
+    body = api.get(f"/assessments/{assessment_id}").json()
+    assert body["report"] is not None and body["report"]["explained"] is False
+    explain_step = next(s for s in body["steps"] if s["step"] == "Explain")
+    assert explain_step["status"] == "failed" and "gave up after 1s" in explain_step["detail"]
+    assert "gave up after 1s" in " ".join(body["report"]["caveats"])

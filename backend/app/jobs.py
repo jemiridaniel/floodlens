@@ -21,13 +21,14 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
-from fastapi.concurrency import run_in_threadpool
+import anyio.to_thread
 from pydantic import BaseModel
 
-from .evidence import evidence_pngs
+from .evidence import evidence_pngs, water_within
 from .geo.aoi import Site
 from .geo.sources import PlanetaryComputerSource
 from .photos import MAX_PHOTOS, Photo, save_photo, segment_all, to_png
@@ -36,6 +37,15 @@ from .schemas import AgentRun, Assessment, FloodReport, Metric, Report
 from .scoring import GROUPS
 
 log = logging.getLogger(__name__)
+
+# A ceiling per stage. The same lesson as the validation runner: a stage that hangs must
+# cost one stage, not the whole assessment. These are deliberately generous -- each inner
+# step has its own, tighter deadline -- so hitting one of these means something is wrong
+# rather than merely slow.
+# Measured: a clean explain is ~35s, and one that trips the evidence-rule check and has to
+# rewrite is ~140s. The ceiling sits above four calls at the client's 90s timeout, so it
+# only fires when something is wrong rather than merely slow.
+STAGE_LIMIT_S = {"Area screen": 300, "Flood history": 180, "Site photos": 360, "Explain": 400}
 
 AREA, HISTORY, PHOTOS, SCORE, EXPLAIN, VERIFY = (
     "Area screen", "Flood history", "Site photos", "Score", "Explain", "Verify")
@@ -72,6 +82,13 @@ class PhotoView(BaseModel):
     error: str = ""
 
 
+class EventGroup(BaseModel):
+    """Reports merged into the one flood they describe, exactly as the score counted it."""
+
+    event_date: str
+    reports: list[FloodReport] = []
+
+
 class GroupView(BaseModel):
     """Metrics grouped the way the report reads them, so the UI never regroups by id."""
 
@@ -96,7 +113,12 @@ class AssessmentView(BaseModel):
     assessment: Assessment | None = None
     groups: list[GroupView] = []
     reports: list[FloodReport] = []
+    report_groups: list[EventGroup] = []
     photos: list[PhotoView] = []
+    # Context for the evidence images, so the UI never has to parse a metric label.
+    optical_date: str | None = None
+    optical_cloud_pct: float | None = None
+    water_layers: dict[str, bool] = {}  # layer -> any water within 1 km
     report: Report | None = None
     run: AgentRun | None = None
     evidence_urls: dict[str, str] = {}
@@ -126,6 +148,9 @@ class Job:
     cost_usd: float = 0.0
 
     assessment: Assessment | None = None
+    optical_date: str | None = None
+    optical_cloud_pct: float | None = None
+    water_layers: dict[str, bool] = field(default_factory=dict)
     cached: Any = None  # a saved AssessmentView, when this job is a demo replay
     history: Any = None
     photos: list[Photo] = field(default_factory=list)
@@ -226,32 +251,58 @@ async def run_job(job: Job, source: Any = None, history_lookup: Any = None,
     site = Site(job.lat, job.lon)
     try:
         layers, history = await asyncio.gather(
-            _area_screen(job, site, source),
-            _flood_history(job, site, history_lookup),
+            _bounded(job, AREA, _area_screen(job, site, source)),
+            _bounded(job, HISTORY, _flood_history(job, site, history_lookup)),
         )
         if layers is None:
             job.finish("failed", "the area screen could not be measured")
             return
         job.history = history
 
-        await _site_photos(job, segment, uploads)
+        await _bounded(job, PHOTOS, _site_photos(job, segment, uploads))
 
         t0 = time.monotonic()
         job.step(SCORE, "running")
         from .schemas import AssessmentRequest
         req = AssessmentRequest(lat=job.lat, lon=job.lon, label=job.label, note=job.note)
-        job.assessment = await run_in_threadpool(assemble, req, layers, history)
+        job.assessment = await in_thread(assemble, req, layers, history)
         job.assessment.id = job.id
         s = job.assessment.score
         job.step(SCORE, "done", _ms(t0),
                  f"{s.score}/100, {s.tier.value}, confidence {s.confidence}"
                  + (f"; missing: {', '.join(s.missing_groups)}" if s.missing_groups else ""))
 
-        await _explain(job, explain)
+        await _bounded(job, EXPLAIN, _explain(job, explain))
+        _ensure_report(job)
         job.finish("done")
     except Exception as exc:  # the job must always end in a state the UI can render
         log.exception("assessment %s failed", job.id)
         job.finish("failed", f"{exc.__class__.__name__}: {exc}")
+
+
+async def in_thread(fn, *args, **kwargs):
+    """Run blocking work in a thread that can actually be abandoned.
+
+    fastapi's run_in_threadpool passes abandon_on_cancel=False, so cancelling it waits for
+    the thread to finish: a stage ceiling built on it is decorative, which is exactly how a
+    stalled model call held an assessment at "Working on it" past seven minutes. The
+    underlying clients all carry their own timeouts, so an abandoned thread does end.
+    """
+    # run_sync takes positional arguments only, so keywords are bound up front.
+    call = partial(fn, **kwargs) if kwargs else fn
+    return await anyio.to_thread.run_sync(call, *args, abandon_on_cancel=True)
+
+
+async def _bounded(job: Job, step: str, work):
+    """Run a stage under its ceiling. A stage that overruns is marked failed and the
+    assessment continues with what the others found."""
+    t0 = time.monotonic()
+    try:
+        return await asyncio.wait_for(work, STAGE_LIMIT_S.get(step))
+    except TimeoutError:
+        job.step(step, "failed", _ms(t0),
+                 f"gave up after {STAGE_LIMIT_S[step]}s; the rest of the assessment continues")
+        return None
 
 
 async def _area_screen(job: Job, site: Site, source: Any):
@@ -259,8 +310,12 @@ async def _area_screen(job: Job, site: Site, source: Any):
     job.step(AREA, "running")
     try:
         src = source or PlanetaryComputerSource()
-        layers = await run_in_threadpool(src.fetch, site, None)
-        job.pngs.update(await run_in_threadpool(evidence_pngs, layers))
+        layers = await in_thread(src.fetch, site, None)
+        job.pngs.update(await in_thread(evidence_pngs, layers))
+        job.water_layers = await in_thread(water_within, layers)
+        if layers.optical is not None:
+            job.optical_date = layers.optical.date
+            job.optical_cloud_pct = round(100 * layers.optical.tile_cloud, 1)
         have = [n for n in ("optical", "radar", "jrc_occurrence", "dem", "landcover")
                 if getattr(layers, n, None) is not None or n in layers.item_ids]
         job.step(AREA, "done", _ms(t0), f"{len(have)} layers: {', '.join(have)}")
@@ -276,7 +331,7 @@ async def _flood_history(job: Job, site: Site, history_lookup: Any):
     try:
         if history_lookup is None:
             from .agent.history import lookup as history_lookup
-        history = await run_in_threadpool(history_lookup, site, address=job.address)
+        history = await in_thread(history_lookup, site, address=job.address)
         job.cost_usd += getattr(history, "cost_usd", 0.0)
         kept = len(history.reports)
         street = sum(1 for r in history.reports if r.match_level == "street")
@@ -300,7 +355,7 @@ async def _site_photos(job: Job, segment: Any, uploads: Path | None) -> None:
         return
     job.step(PHOTOS, "running")
     try:
-        stored = [await run_in_threadpool(save_photo, b, uploads)
+        stored = [await in_thread(save_photo, b, uploads)
                   for b in job.photo_bytes[:MAX_PHOTOS]]
         for name, image in stored:
             job.pngs[Path(name).stem] = to_png(image)
@@ -320,7 +375,7 @@ async def _explain(job: Job, explain: Any) -> None:
     try:
         if explain is None:
             from .agent.loop import explain
-        run = await run_in_threadpool(explain, job.assessment, None)
+        run = await in_thread(explain, job.assessment, None)
         job.run = run
         job.cost_usd += run.cost_usd
         model_ms = sum(s.ms for s in run.steps if s.kind == "model")
@@ -336,6 +391,28 @@ async def _explain(job: Job, explain: Any) -> None:
     job.step(VERIFY, "done" if ok else "failed", sum(s.ms for s in checks),
              "accepted" if ok else "; ".join(job.run.errors)[:200]
              or "the model's report was rejected; showing the metrics-only report")
+
+
+def _ensure_report(job: Job) -> None:
+    """Guarantee a report. The score is valid whatever happened to the agent, so the
+    officer gets the metrics-only version rather than a verdict with nothing written
+    beside it."""
+    if job.run is not None or job.assessment is None:
+        return
+    from .agent.loop import fallback_report  # local: keeps the offline path import-free
+
+    why = job.steps[EXPLAIN].detail or "the explanation step did not finish"
+    job.run = AgentRun(report=fallback_report(job.assessment, why))
+    if job.steps[VERIFY].status == "pending":
+        job.step(VERIFY, "skipped", 0, "nothing was written to verify; showing the "
+                                       "measurements and the action the tier allows")
+
+
+def _grouped(reports: list[FloodReport]):
+    if not reports:
+        return []
+    from .agent.history import group_events  # local: keeps the offline path import-free
+    return group_events(reports)
 
 
 def _ms(t0: float) -> int:
@@ -382,7 +459,12 @@ def view(job: Job, base: str = "") -> AssessmentView:
         note=job.note, from_cache=job.from_cache,
         assessment=a, groups=groups,
         reports=list(getattr(job.history, "reports", []) or []),
+        report_groups=[EventGroup(event_date=d, reports=rs)
+                       for d, rs in _grouped(getattr(job.history, "reports", []) or [])],
         photos=photos,
+        optical_date=job.optical_date,
+        optical_cloud_pct=job.optical_cloud_pct,
+        water_layers=dict(job.water_layers),
         report=job.run.report if job.run else None,
         run=job.run,
         evidence_urls={n: f"{base}/assessments/{job.id}/evidence/{n}.png" for n in job.pngs},

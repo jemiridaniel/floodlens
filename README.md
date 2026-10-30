@@ -8,6 +8,36 @@ Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/m
 
 > **Built during the hackathon.** All code in this repository was written from Oct 27, 2026 onward, during the event. No code is reused from any earlier project.
 
+## Try it
+
+**[floodlens-psi.vercel.app](https://floodlens-psi.vercel.app)**
+
+Three saved sites load instantly and cost nothing: **Ago Palace Way, Okota** (High, held
+there by the street-level evidence rule), **Lekki Phase 1** (Low, and it shows what a site
+with no street-level reports looks like) and **Ogba**. Pin anywhere else and it runs for
+real, which takes a minute or two.
+
+New assessments are capped at 10 per hour per address, because each one spends real money
+on a web search and two or three model calls. The saved sites are never counted against
+that, so the demo keeps working after you hit the cap.
+
+API: `https://jemiridaniel--floodlens-web.us-east.modal.run` ([/health](https://jemiridaniel--floodlens-web.us-east.modal.run/health), [/limits](https://jemiridaniel--floodlens-web.us-east.modal.run/limits)).
+
+## Deployment
+
+| Part | Where | Notes |
+| --- | --- | --- |
+| Backend | Modal (`backend/modal_app.py`) | One warm container. Jobs, event streams and the rate limiter are in memory, so `max_containers=1` is load-bearing, not tuning. Cache and uploads on a Volume; keys in a Modal Secret. |
+| Frontend | Vercel (`web/`, root directory `web`) | Connected to this repo: every push to `main` redeploys. `NEXT_PUBLIC_API_URL` is the only setting, and no key ever reaches the browser. |
+
+```bash
+modal deploy backend/modal_app.py
+modal volume put floodlens-data data/cache/demo /cache/demo --force   # seed the demo sites
+modal volume put floodlens-data data/cache/history /cache/history --force
+```
+
+The Volume is re-read at most once a minute, so seeding takes effect without a redeploy.
+
 ## Running it
 
 Two parts: a FastAPI backend and a Next.js frontend. The backend holds every credential;

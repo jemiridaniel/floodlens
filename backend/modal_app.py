@@ -17,6 +17,7 @@ import modal
 
 APP_NAME = "floodlens"
 DATA = Path("/data")
+VOLUME_RELOAD_S = 60  # pick up anything seeded from the CLI without needing a redeploy
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -62,11 +63,31 @@ def web():
 
     # Point the app's on-disk state at the Volume before anything imports it.
     os.environ.setdefault("FLOODLENS_DEMO_CACHE", "1")
+    os.environ.setdefault("FLOODLENS_WEB_ORIGIN", "https://floodlens-psi.vercel.app")
     for name, path in (("FLOODLENS_CACHE_DIR", DATA / "cache"),
                        ("FLOODLENS_UPLOAD_DIR", DATA / "uploads")):
         path.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault(name, str(path))
 
+    # Seeding the Volume from the CLI is invisible to this container until it reloads, and
+    # a redeploy is skipped when the code has not changed, so "modal volume put" alone
+    # silently did nothing. A cheap periodic reload means seeding works on its own: once
+    # it did not, a fresh search overwrote a seeded entry with a thinner result and the
+    # demo quietly lost a flood event.
+    import time as _time
+
     from app.main import app as fastapi_app
+
+    last = {"reload": _time.monotonic()}
+
+    @fastapi_app.middleware("http")
+    async def refresh_volume(request, call_next):
+        if _time.monotonic() - last["reload"] > VOLUME_RELOAD_S:
+            last["reload"] = _time.monotonic()
+            try:
+                volume.reload()
+            except Exception:  # a stale view is far better than a failed request
+                pass
+        return await call_next(request)
 
     return fastapi_app

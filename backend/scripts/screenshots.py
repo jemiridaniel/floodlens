@@ -10,14 +10,16 @@ sites replay instantly. Install with:  pip install playwright && playwright inst
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PWTimeout
 
-WEB = "http://localhost:3000"
-SHOTS = Path(__file__).resolve().parents[2] / "web" / "screenshots"
+WEB = os.environ.get("FLOODLENS_WEB", "http://localhost:3000")
+SHOTS = Path(os.environ.get("FLOODLENS_SHOTS",
+                            Path(__file__).resolve().parents[2] / "web" / "screenshots"))
 DESKTOP = {"width": 1440, "height": 1000}
 PHONE = {"width": 390, "height": 844}  # iPhone 14 logical width
 PHOTOS = Path.home() / "Downloads" / "site_photos" / "jpg"

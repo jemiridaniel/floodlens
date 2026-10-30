@@ -19,6 +19,7 @@ out/
 *.png
 !docs/**/*.png
 !web/screenshots/*.png
+!web/app/fonts/*.woff2
 
 # node / web
 node_modules/

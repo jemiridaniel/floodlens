@@ -77,3 +77,40 @@ def test_covering_item_picks_tile_containing_site():
     home = R(id="home", bbox=[0, 0, 10, 10])
     assert covering_item([near, home], Site(6.45, 3.39)).id == "home"
     assert covering_item([], Site(6.45, 3.39)) is None
+
+
+def test_cloud_cover_is_the_whole_tile_not_the_window():
+    """The window around a site is often clear inside a cloudy pass, so the 64x64 window
+    estimate reads 0% and misleads. The reported figure is the scene's own eo:cloud_cover."""
+    from app.geo.sources import tile_cloud_fraction
+
+    class Item:
+        def __init__(self, cover):
+            self.properties = {"eo:cloud_cover": cover}
+
+    assert tile_cloud_fraction(Item(0)) == 0.0
+    assert tile_cloud_fraction(Item(37.4)) == pytest.approx(0.374)
+    assert tile_cloud_fraction(Item(100)) == 1.0
+    assert tile_cloud_fraction(Item(None)) == 0.0  # missing metadata is not "cloudy"
+    assert tile_cloud_fraction(Item(-3)) == 0.0 and tile_cloud_fraction(Item(140)) == 1.0
+
+
+def test_the_cloud_metric_reports_the_tile_and_says_so():
+    from app.metrics import compute_metrics
+
+    from .conftest import make_layers
+    layers = make_layers()
+    layers.optical.tile_cloud, layers.optical.grid_cloud = 0.374, 0.0
+    metric = next(m for m in compute_metrics(layers) if m.id == "m_tile_cloud")
+    assert metric.value == pytest.approx(37.4)
+    assert metric.label == "Cloud over the satellite tile"
+    assert "whole tile" in metric.source
+    assert metric.display() == "37"  # a reader sees 37%, not the window's 0%
+
+
+def test_the_window_estimate_still_picks_the_scene():
+    """Selection must stay on the window: a 40% cloudy tile can be clear over the site."""
+    from app.geo.sources import Optical
+    o = Optical("S2", "2026-01-24", tile_cloud=0.4, grid_cloud=0.0,
+                scl=None, blue=None, green=None, red=None, nir=None)
+    assert o.grid_cloud < o.tile_cloud

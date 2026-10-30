@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-UPLOADS = Path(__file__).resolve().parents[2] / "data" / "uploads"
+UPLOADS = Path(os.environ.get("FLOODLENS_UPLOAD_DIR",
+                              Path(__file__).resolve().parents[2] / "data" / "uploads"))
 MAX_PHOTOS = 5
 MAX_EDGE_PX = 1600  # plenty for SAM, and keeps the upload directory small
 PROMPTS = ("standing water", "puddle", "door", "road", "drain")

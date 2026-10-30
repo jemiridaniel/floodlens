@@ -24,6 +24,7 @@ import hashlib
 import html as html_lib
 import json
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -61,7 +62,8 @@ MAX_QUOTE_WORDS = 30
 USD_PER_SEARCH = 2.50 / 1000
 NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "FloodLens/0.1 flood-history lookup (OSM Nominatim policy: 1 req/s)"
-CACHE_DIR = Path(__file__).resolve().parents[3] / "data" / "cache" / "history"
+CACHE_DIR = Path(os.environ.get("FLOODLENS_CACHE_DIR",
+                                Path(__file__).resolve().parents[3] / "data" / "cache")) / "history"
 
 # A street-level report is direct evidence about this address; an estate-level one is
 # weaker. Area matches score NOTHING: 27 of 30 random Lagos addresses turned up an

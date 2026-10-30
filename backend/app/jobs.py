@@ -50,7 +50,8 @@ STAGE_LIMIT_S = {"Area screen": 300, "Flood history": 180, "Site photos": 360, "
 AREA, HISTORY, PHOTOS, SCORE, EXPLAIN, VERIFY = (
     "Area screen", "Flood history", "Site photos", "Score", "Explain", "Verify")
 STEP_ORDER = (AREA, HISTORY, PHOTOS, SCORE, EXPLAIN, VERIFY)
-DEMO_CACHE = Path(__file__).resolve().parents[2] / "data" / "cache" / "demo"
+DEMO_CACHE = Path(os.environ.get("FLOODLENS_CACHE_DIR",
+                                 Path(__file__).resolve().parents[2] / "data" / "cache")) / "demo"
 
 
 def demo_cache_on() -> bool:
@@ -482,21 +483,31 @@ def demo_key(lat: float, lon: float) -> str:
     return f"{lat:.4f}_{lon:.4f}"
 
 
-def scoring_fingerprint() -> str:
-    """Identifies the scoring rules a cached result was produced under.
+# Every module whose code decides what a view contains. Scoring alone was not enough: the
+# cloud figure was fixed in metrics.py and sources.py, and the cached demos went on
+# serving the old 0% because the scoring rules had not moved.
+MEASURING_MODULES = ("metrics.py", "scoring.py", "evidence.py", "agent/history.py",
+                     "geo/sources.py")
 
-    A demo must never replay a verdict the current code would not produce. The Okota entry
+
+def scoring_fingerprint() -> str:
+    """Identifies the code a cached result was produced under.
+
+    A demo must never replay a result the current code would not produce. The Okota entry
     was recorded before the street-level tier floor existed and kept replaying Moderate
     after the rule would have made it High, which is exactly the kind of quiet staleness
-    that makes a cached demo a lie. Change a weight, a ramp, a tier cut or the floor and
-    this changes, so the entry is ignored and re-run.
+    that makes a cached demo a lie. Change a weight, a ramp, a tier cut, the floor, or any
+    of the code that measures, and this changes, so the entry is ignored and re-run.
     """
     from .scoring import FEATURES, GROUPS, TIER_CUTS, TIER_FLOOR, TIER_FLOOR_STREET_EVENTS
+    here = Path(__file__).resolve().parent
     raw = json.dumps({
         "features": [[f.metric_id, f.weight, f.zero_at, f.full_at] for f in FEATURES],
         "groups": {k: list(v) for k, v in GROUPS.items()},
         "cuts": [[c, t.value] for c, t in TIER_CUTS],
         "floor": [TIER_FLOOR_STREET_EVENTS, TIER_FLOOR.value],
+        "code": {name: hashlib.sha1((here / name).read_bytes()).hexdigest()
+                 for name in MEASURING_MODULES if (here / name).exists()},
     }, sort_keys=True)
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 

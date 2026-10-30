@@ -35,7 +35,7 @@ def make_layers(water_rows: int = 70, flooded_rows: int = 30, site_height: float
 
     return SiteLayers(
         site=Site(6.4541, 3.3947), grid=GRID,
-        optical=Optical("S2_TEST", "2026-01-24", 0.02, scl, green, green, green, nir),
+        optical=Optical("S2_TEST", "2026-01-24", 0.12, 0.02, scl, green, green, green, nir),
         radar=Radar("S1_TEST", "2025-07-22", vv),
         jrc_occurrence=occ, dem=dem, landcover=lc,
         daily_rain_mm=[("2025-06-10", 140.0), ("2025-06-11", 20.0), ("2024-07-02", 95.0)],

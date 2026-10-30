@@ -51,7 +51,12 @@ def bound_requests_timeout(seconds: float = REQUESTS_TIMEOUT_S) -> None:
 class Optical:
     item_id: str
     date: str
-    tile_cloud: float  # 0-1, over this grid
+    # Cloud over the whole Sentinel-2 tile, from the scene's own metadata. This is the
+    # figure a reader should see: it says how cloudy the pass was. grid_cloud is the
+    # cheap 64 x 64 estimate over the 2 km window, used only to pick the clearest scene,
+    # and it reads 0% often enough that showing it as "cloud" was misleading.
+    tile_cloud: float  # 0-1, whole tile (eo:cloud_cover)
+    grid_cloud: float  # 0-1, the 2 km window around the site
     scl: np.ndarray
     blue: np.ndarray
     green: np.ndarray
@@ -106,8 +111,19 @@ def _search(catalog, collection: str, site: Site, dates: str | None = None, quer
     return list(catalog.search(**kwargs).items())
 
 
+def tile_cloud_fraction(item) -> float:
+    """Cloud over the whole tile, 0-1, from the scene's own eo:cloud_cover."""
+    raw = item.properties.get("eo:cloud_cover")
+    return 0.0 if raw is None else max(0.0, min(1.0, float(raw) / 100))
+
+
 def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> Optical | None:
-    """The Sentinel-2 scene with the least cloud over this grid (not over the whole scene)."""
+    """The Sentinel-2 scene with the least cloud over this grid (not over the whole scene).
+
+    Selection uses the window around the site, because a tile can be 40% cloudy and clear
+    exactly where the collateral is. The reported figure is the whole tile, which is what
+    "cloud cover" means to anyone reading it.
+    """
     items = _search(catalog, "sentinel-2-l2a", site, dates, {"eo:cloud_cover": {"lt": 60}})
     if not items:
         return None
@@ -121,7 +137,7 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
             best = (item, cloud)
         if cloud < 0.01:
             break
-    item, cloud = best
+    item, grid_cloud = best
 
     def band(name: str, rs=Resampling.bilinear) -> np.ndarray:
         return read_window(item.assets[name].href, site, GRID, rs)
@@ -129,7 +145,8 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
     return Optical(
         item_id=item.id,
         date=item.properties["datetime"][:10],
-        tile_cloud=round(cloud, 3),
+        tile_cloud=round(tile_cloud_fraction(item), 3),
+        grid_cloud=round(grid_cloud, 3),
         scl=band("SCL", Resampling.nearest),
         blue=band("B02"),
         green=band("B03"),

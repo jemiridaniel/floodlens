@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from typing import Annotated
 
@@ -12,16 +13,30 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
 from . import jobs as J
+from .limits import RateLimit, client_ip
 from .photos import MAX_PHOTOS
 from .schemas import AssessmentRequest
 
-app = FastAPI(title="FloodLens", version="0.2.0")
+app = FastAPI(title="FloodLens", version="0.3.0")
+
+# Only new work is rate limited; a cached site replays for free, so the demo never
+# locks visitors out of the sites it is meant to show.
+limiter = RateLimit()
 
 # The Next.js app in web/ runs here in development. Nothing else is allowed, and the API
 # holds no credentials the browser could ever see.
+# The deployed frontend and local development, and nothing else. FLOODLENS_WEB_ORIGIN
+# carries the Vercel URL in production; no credential ever reaches the browser.
+ALLOWED_ORIGINS = [o for o in (
+    os.environ.get("FLOODLENS_WEB_ORIGIN"),
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+) if o]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://floodlens[a-z0-9-]*\.vercel\.app",  # preview deployments
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -50,8 +65,16 @@ def health() -> dict[str, str]:
     return {"status": "ok", "demo_cache": "on" if J.demo_cache_on() else "off"}
 
 
+@app.get("/limits")
+def limits(request: Request) -> dict[str, int]:
+    """What this caller has left. Lets the UI warn before it refuses."""
+    return {"new_assessments_per_hour": limiter.limit,
+            "remaining": limiter.remaining(client_ip(request))}
+
+
 @app.post("/assessments", status_code=202)
 async def create_assessment(
+    request: Request,
     lat: Annotated[float, Form()],
     lon: Annotated[float, Form()],
     address: Annotated[str | None, Form()] = None,
@@ -80,9 +103,20 @@ async def create_assessment(
 
     cached = J.load_demo(lat, lon) if J.demo_cache_on() and not real else None
     if cached is not None:
-        J.replay(job, *cached)
-    else:
-        await J.start(job, on_done=J.save_demo if J.demo_cache_on() else None, **HOOKS)
+        J.replay(job, *cached)  # costs nothing, so it is never rate limited
+        return {"id": job.id}
+
+    caller = client_ip(request)
+    allowed, wait_s = limiter.check(caller)
+    if not allowed:
+        del _jobs[job.id]
+        raise HTTPException(status_code=429, detail=(
+            f"That is {limiter.limit} new assessments in an hour from this address. Each one "
+            f"costs real money to run, so the demo caps them. Try again in {wait_s // 60 + 1} "
+            "minutes, or open one of the saved example sites, which are unlimited."),
+            headers={"Retry-After": str(wait_s)})
+    limiter.record(caller)
+    await J.start(job, on_done=J.save_demo if J.demo_cache_on() else None, **HOOKS)
     return {"id": job.id}
 
 

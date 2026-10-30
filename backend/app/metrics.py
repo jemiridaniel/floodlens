@@ -43,8 +43,9 @@ def compute_metrics(layers: SiteLayers) -> list[Metric]:
                 label = "Water within 250 m on a clear date, confirmed by history"
                 source = f"Sentinel-2 {o.date} + JRC Global Surface Water"
             out.append(Metric(id="m_water_now_250", label=label, value=100 * share, unit="%", source=source))
-        out.append(Metric(id="m_tile_cloud", label="Cloud over the site image", value=100 * o.tile_cloud,
-                          unit="%", source=f"Sentinel-2 {o.date}", decimals=0))
+        out.append(Metric(id="m_tile_cloud", label="Cloud over the satellite tile",
+                          value=100 * o.tile_cloud, unit="%", decimals=0,
+                          source=f"Sentinel-2 {o.date}, eo:cloud_cover for the whole tile"))
 
     if layers.radar is not None:
         rd = layers.radar

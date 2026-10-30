@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app import jobs as J
-from app.main import HOOKS, _jobs, app
+from app.main import HOOKS, _jobs, app, limiter
 from app.schemas import AgentRun, FloodHistory, FloodReport, Report
 
 from .conftest import FakeSource, make_layers
@@ -64,6 +65,7 @@ def photo_bytes(colour=(120, 140, 160), size=(32, 24), exif=True) -> bytes:
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.delenv("FLOODLENS_DEMO_CACHE", raising=False)
+    limiter._hits.clear()  # the limiter is module state: one test must not spend another's quota
     HOOKS.clear()
     HOOKS.update(source=FakeSource(make_layers()), history_lookup=fake_history(),
                  explain=fake_explain, segment=fake_segment, uploads=tmp_path / "uploads")
@@ -429,3 +431,76 @@ def test_an_explain_that_overruns_still_leaves_a_report(api, monkeypatch):
     explain_step = next(s for s in body["steps"] if s["step"] == "Explain")
     assert explain_step["status"] == "failed" and "gave up after 1s" in explain_step["detail"]
     assert "gave up after 1s" in " ".join(body["report"]["caveats"])
+
+
+# ------------------------------------------------------------------ rate limiting
+def test_new_assessments_are_capped_per_address(api, monkeypatch):
+    """A public demo spends real money per uncached run."""
+    monkeypatch.setattr(limiter, "limit", 2)
+
+    for _ in range(2):
+        assert api.post("/assessments", data={"lat": 6.5026, "lon": 3.3052}).status_code == 202
+    refused = api.post("/assessments", data={"lat": 6.5026, "lon": 3.3052})
+    assert refused.status_code == 429
+    assert "Retry-After" in refused.headers
+    detail = refused.json()["detail"]
+    assert "2 new assessments in an hour" in detail
+    assert "saved example sites" in detail  # tells the visitor what still works
+
+
+def test_cached_sites_are_never_rate_limited(api, tmp_path, monkeypatch):
+    """The demo must keep working once a visitor has used their quota."""
+    monkeypatch.setenv("FLOODLENS_DEMO_CACHE", "1")
+    monkeypatch.setattr(J, "DEMO_CACHE", tmp_path / "demo")
+
+    drain(api, start(api))  # one real run, which seeds the cache
+    monkeypatch.setattr(limiter, "limit", 0)  # quota now entirely used up
+    assert api.post("/assessments", data={"lat": 6.9, "lon": 3.9}).status_code == 429
+    assert api.post("/assessments", data={"lat": 6.5026, "lon": 3.3052}).status_code == 202
+
+
+def test_the_limit_is_per_address_and_rolls_off():
+    from app.limits import RateLimit
+    limit = RateLimit(limit=2, window_s=100)
+    for _ in range(2):
+        limit.record("1.1.1.1", now=1000)
+    assert limit.check("1.1.1.1", now=1000)[0] is False
+    assert limit.check("2.2.2.2", now=1000)[0] is True  # a different caller is unaffected
+    assert limit.check("1.1.1.1", now=1101)[0] is True  # the window has rolled off
+    assert limit.remaining("1.1.1.1", now=1101) == 2
+
+
+def test_the_caller_is_read_from_the_proxy_header():
+    from app.limits import client_ip
+
+    class Req:
+        def __init__(self, headers, host=None):
+            self.headers = headers
+            self.client = type("C", (), {"host": host})() if host else None
+
+    assert client_ip(Req({"x-forwarded-for": "9.9.9.9, 10.0.0.1"})) == "9.9.9.9"
+    assert client_ip(Req({}, host="5.5.5.5")) == "5.5.5.5"
+    assert client_ip(Req({})) == "unknown"
+
+
+def test_the_remaining_quota_is_reported(api, monkeypatch):
+    monkeypatch.setattr(limiter, "limit", 3)
+    assert api.get("/limits").json() == {"new_assessments_per_hour": 3, "remaining": 3}
+    api.post("/assessments", data={"lat": 6.9, "lon": 3.9})
+    assert api.get("/limits").json()["remaining"] == 2
+
+
+def test_the_fingerprint_moves_when_the_measuring_code_changes(tmp_path, monkeypatch):
+    """Scoring is not the only thing that decides a result. The cloud figure was fixed in
+    metrics.py and the cached demos kept serving the old one, because the weights had not
+    moved."""
+    import app.jobs as jobs_module
+    before = J.scoring_fingerprint()
+    real = (Path(jobs_module.__file__).resolve().parent / "metrics.py").read_bytes()
+
+    fake = tmp_path / "app"
+    for name in J.MEASURING_MODULES:
+        (fake / name).parent.mkdir(parents=True, exist_ok=True)
+        (fake / name).write_bytes(real if name != "metrics.py" else real + b"\n# changed\n")
+    monkeypatch.setattr(jobs_module, "__file__", str(fake / "jobs.py"))
+    assert J.scoring_fingerprint() != before

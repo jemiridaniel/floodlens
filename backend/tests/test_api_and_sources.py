@@ -111,6 +111,68 @@ def test_the_cloud_metric_reports_the_tile_and_says_so():
 def test_the_window_estimate_still_picks_the_scene():
     """Selection must stay on the window: a 40% cloudy tile can be clear over the site."""
     from app.geo.sources import Optical
-    o = Optical("S2", "2026-01-24", tile_cloud=0.4, grid_cloud=0.0,
+    o = Optical("S2", "2026-01-24", tile_cloud=0.4, grid_cloud=0.0, image_cloud=0.03,
                 scl=None, blue=None, green=None, red=None, nir=None)
     assert o.grid_cloud < o.tile_cloud
+    # three different questions, three different answers, and the caption uses the picture
+    assert o.image_cloud != o.tile_cloud
+
+
+# ---------------------------------------------- cloud over the pictured window
+def _tile(cloud_px=None, bright_roofs=False):
+    """A 200 x 200 synthetic tile. Optionally puts cloud OUTSIDE the 500 m measurement
+    ring but inside the 2 km picture, which is the case that caught us out."""
+    import numpy as np
+    n = 200
+    scl = np.full((n, n), 5, "float32")  # not vegetated: dense urban
+    blue = np.full((n, n), 2100, "float32")  # 0.21 reflectance, a normal Lagos roofscape
+    red = np.full((n, n), 2600, "float32")
+    nir = np.full((n, n), 3000, "float32")
+    if bright_roofs:  # bright concrete: bright in the visible, not flat, not that bright
+        blue[20:40, 20:40], red[20:40, 20:40], nir[20:40, 20:40] = 3400, 4600, 3200
+    if cloud_px is not None:
+        ys, xs = cloud_px
+        blue[ys, xs], red[ys, xs], nir[ys, xs] = 4900, 5600, 6000  # bright and flat
+    return scl, blue, red, nir
+
+
+def test_cloud_outside_the_rings_still_counts_for_the_caption():
+
+    from app.geo.aoi import Grid, ring_mask
+    from app.geo.water import cloud_fraction
+
+    grid = Grid(size_m=2000, res_m=10)
+    corner = (slice(0, 40), slice(0, 40))  # top-left of the picture, ~1.2 km from centre
+    scl, blue, red, nir = _tile(cloud_px=corner)
+
+    whole = cloud_fraction(scl, blue, red, nir)
+    within_500 = cloud_fraction(scl, blue, red, nir, ring_mask(grid, 500))
+    assert whole == pytest.approx(1600 / 40000, abs=0.002)  # 4% of the picture
+    assert within_500 == 0.0  # and none of it is inside the measured ring
+    assert whole > within_500, "the caption must not inherit the ring's answer"
+
+
+def test_bright_roofs_are_not_called_cloud():
+    """Half of Lagos is brighter than a naive threshold; concrete must not read as cloud."""
+    from app.geo.water import cloud_fraction
+    scl, blue, red, nir = _tile(bright_roofs=True)
+    assert cloud_fraction(scl, blue, red, nir) == 0.0
+
+
+def test_cloud_the_scene_classifier_missed_is_still_counted():
+    """SCL called two obvious cloud blobs 'not vegetated' over bright Lagos rooftops."""
+    import numpy as np
+
+    from app.geo.water import cloud_fraction
+    scl, blue, red, nir = _tile(cloud_px=(slice(80, 120), slice(80, 120)))
+    assert not np.isin(scl.astype(int), (3, 8, 9, 10)).any()  # SCL sees nothing
+    assert cloud_fraction(scl, blue, red, nir) == pytest.approx(0.04, abs=0.002)
+
+
+def test_scl_cloud_classes_are_counted_even_when_not_bright():
+
+    from app.geo.water import cloud_fraction
+    scl, blue, red, nir = _tile()
+    scl[0:20, 0:20] = 3   # cloud shadow: dark, so only SCL can find it
+    scl[20:30, 0:20] = 10  # cirrus: thin, so only SCL can find it
+    assert cloud_fraction(scl, blue, red, nir) == pytest.approx(600 / 40000, abs=0.002)

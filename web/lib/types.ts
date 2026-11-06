@@ -152,7 +152,10 @@ export interface AssessmentView {
   report_groups: EventGroup[];
   photos: PhotoView[];
   optical_date: string | null;
+  /** Cloud over the pictured window, so the caption describes the image it captions. */
   optical_cloud_pct: number | null;
+  /** Cloud over the 500 m ring, where the water metrics are actually measured. */
+  optical_ring_cloud_pct: number | null;
   /** layer name -> whether it found any water within 1 km. All false means the three
    *  mask images are blank squares, and one sentence says more than three of those. */
   water_layers: Record<string, boolean>;

@@ -129,9 +129,18 @@ export function RiskReport({ view }: { view: AssessmentView }) {
 
   const layers = Object.values(view.water_layers);
   const noWater = layers.length > 0 && layers.every((found) => !found);
+  // The caption describes the picture, not the ~110 km tile it was cut from. Where the
+  // 500 m ring is cloudier than the view as a whole, say so: that is the area the water
+  // numbers come from, and it is the thing worth doubting.
+  const ringCloud = view.optical_ring_cloud_pct;
+  const viewCloud = view.optical_cloud_pct;
   const opticalCaption = view.optical_date
     ? `, ${view.optical_date}${
-        view.optical_cloud_pct != null ? `, ${view.optical_cloud_pct.toFixed(0)}% cloud` : ""
+        viewCloud != null ? `, ${viewCloud.toFixed(0)}% cloud in this view` : ""
+      }${
+        ringCloud != null && viewCloud != null && ringCloud >= viewCloud + 2
+          ? ` (${ringCloud.toFixed(0)}% over the 500 m ring)`
+          : ""
       }`
     : "";
 
@@ -210,6 +219,11 @@ export function RiskReport({ view }: { view: AssessmentView }) {
               </p>
               <p className="mt-1 text-xs text-muted">Confidence: {score.confidence}</p>
             </>
+          )}
+          {!a.has_street_reports && (
+            <p className="mt-3 rounded-[10px] bg-moderate-bg px-3 py-2 text-sm font-semibold text-moderate-ink">
+              {NO_STREET_REPORTS}
+            </p>
           )}
         </div>
         <div className="flex-1 border-t border-rule pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0">

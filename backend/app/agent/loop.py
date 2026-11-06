@@ -85,12 +85,16 @@ Rules, enforced by a verifier that will reject your report:
    officer, not a scientist. Say plainly what is uncertain.
 6. If you are told a required sentence is missing, put it in a caveat word for word. It is
    there because absence of news is not evidence of safety, and it is not optional.
-7. Write about evidence, not arithmetic. Say what was measured, where and when: "flooding
+7. Where no street-level report was found, say what the SEARCH found, never what the site
+   has never done. "No street-level flood reports found" is true; "the history is clean",
+   "no history of flooding" and the like are claims about the world that we did not check,
+   and they are rejected. News covers some parts of Lagos far better than others.
+8. Write about evidence, not arithmetic. Say what was measured, where and when: "flooding
    on this street was reported by three outlets in June 2026", "the ground here sits 1.0 m
    lower than the land around it", "no regular water within 1 km". Never explain a verdict
    by how many points something contributed; a loan officer cannot check points, and can
    check a date, a place and a measurement.
-8. If get_metrics shows tier_was_held_by_an_evidence_rule, the score did NOT earn the
+9. If get_metrics shows tier_was_held_by_an_evidence_rule, the score did NOT earn the
    tier. Copy that block's how_to_say_it sentence into your summary word for word, then
    explain the flooding it refers to. Never write that the site "scores X and is <tier>"
    in one breath: X belongs to the lower tier the score alone gives, and saying otherwise
@@ -189,7 +193,9 @@ def metrics_payload(assessment: Assessment) -> dict[str, Any]:
         "tier_was_held_by_an_evidence_rule": floored,
         "metrics": [
             {
-                "id": m.id, "label": m.label, "value": m.shown(), "unit": m.unit, "source": m.source,
+                # "reading", not "value": the model echoed the field name into the report
+                # ("Value is more than 1 km to regular water")
+                "id": m.id, "label": m.label, "reading": m.shown(), "source": m.source,
                 "contribution_points": s.contributions.get(m.id, 0.0),
                 "in_score": m.id in s.contributions,
             }
@@ -298,6 +304,20 @@ def _user_image(text: str, png: bytes) -> dict[str, Any]:
     ]}
 
 
+# The model sometimes opens a sentence with the name of the field it read, which lands in
+# the report as "Value is more than 1 km to regular water". Renaming the field helps and
+# does not guarantee; this removes it whatever the field is called.
+FIELD_ECHO = re.compile(
+    r"^\s*(?:the\s+)?(?:value|reading|metric|measurement|figure)\s+(?:is|was|of|shows?)\s+",
+    re.I)
+
+
+def tidy(text: str) -> str:
+    """Drop a leading echo of the data field's name, and re-capitalise what is left."""
+    out = FIELD_ECHO.sub("", (text or "").strip())
+    return out[:1].upper() + out[1:] if out else (text or "").strip()
+
+
 def _parse_report(arguments: str, assessment: Assessment) -> tuple[Report | None, list[str]]:
     """Validate submit_report's arguments. Errors here go back to the model like the verifier's."""
     try:
@@ -307,6 +327,15 @@ def _parse_report(arguments: str, assessment: Assessment) -> tuple[Report | None
     if not isinstance(data, dict):
         return None, ["submit_report arguments must be a JSON object"]
     data.pop("explained", None)  # the code owns this flag, not the model
+    for key in ("summary", "rationale"):
+        if isinstance(data.get(key), str):
+            data[key] = tidy(data[key])
+    if isinstance(data.get("drivers"), list):
+        for driver in data["drivers"]:
+            if isinstance(driver, dict) and isinstance(driver.get("why"), str):
+                driver["why"] = tidy(driver["why"])
+    if isinstance(data.get("caveats"), list):
+        data["caveats"] = [tidy(c) if isinstance(c, str) else c for c in data["caveats"]]
     try:
         report = Report(**data)
     except ValidationError as exc:
@@ -446,7 +475,9 @@ def _run(client: Any, assessment: Assessment, pngs: dict[str, bytes], max_calls:
             if report is not None and not errors:
                 verdict = verify(report.text(), stated_tier(report.text(), assessment.score.tier),
                                  report.action.value, assessment.metrics, assessment.score,
-                                 extra_allowed, required)
+                                 extra_allowed, required,
+                                 allowed_actions=assessment.allowed_actions,
+                                 has_street_reports=assessment.has_street_reports)
                 errors = verdict.errors
             ok = report is not None and not errors
             add_step(kind, "submit_report" if kind == "schema" else "verifier",

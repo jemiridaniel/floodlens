@@ -351,3 +351,36 @@ def test_one_flood_reported_by_three_outlets_does_not_reach_the_floor():
                                            event_date="2025-09-16", publisher="d",
                                            url="https://example.test/d", quote="q")]
     assert len(distinct_events(two_storms)) == 2
+
+
+# ------------------------------------------- plain approval needs some evidence behind it
+def test_a_built_up_site_with_no_street_reports_cannot_be_plainly_approved():
+    """A bare "approve" reads as a clean bill of health, and that is the one inference an
+    empty news search in a built-up area cannot support."""
+    from app.schemas import Action
+    from app.scoring import BUILT_UP_FOR_NOTE, allowed_actions
+
+    assert allowed_actions(Tier.low, has_street_reports=False, built_up_pct=93) == [
+        Action.approve_note]
+    assert allowed_actions(Tier.low, has_street_reports=True, built_up_pct=93) == [Action.approve]
+    # open land: the news argument does not apply the same way
+    assert allowed_actions(Tier.low, has_street_reports=False,
+                           built_up_pct=BUILT_UP_FOR_NOTE - 1) == [Action.approve]
+    assert allowed_actions(Tier.low, has_street_reports=False, built_up_pct=None) == [
+        Action.approve]
+
+
+def test_the_rule_never_relaxes_a_higher_tier():
+    from app.scoring import ALLOWED_ACTIONS, allowed_actions
+    for tier in (Tier.moderate, Tier.high, Tier.severe):
+        assert allowed_actions(tier, False, 93) == list(ALLOWED_ACTIONS[tier])
+
+
+def test_the_assessment_carries_the_capped_actions(layers):
+    """End to end: the synthetic site is built-up and has no street reports."""
+    from app.pipeline import assemble
+    from app.schemas import Action, AssessmentRequest
+    a = assemble(AssessmentRequest(lat=6.45, lon=3.39), layers, history=None)
+    built = next(m.value for m in a.metrics if m.id == "m_built_up_500")
+    assert built >= 50 and a.has_street_reports is False
+    assert Action.approve not in a.allowed_actions

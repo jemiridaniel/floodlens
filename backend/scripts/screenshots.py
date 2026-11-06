@@ -124,6 +124,18 @@ def main() -> int:
                 passed &= check(page, "Lekki: no-reports sentence",
                                 "No street-level flood reports found. This does not mean the "
                                 "site is safe." in body)
+                verdict = page.inner_text("section[aria-label='Verdict']")
+                passed &= check(page, "Lekki: sentence sits in the verdict card",
+                                "No street-level flood reports found." in verdict)
+                passed &= check(page, "Lekki: no clean-history claim",
+                                not any(p in body.lower() for p in
+                                        ("history is clean", "no history of flooding",
+                                         "never flooded", "clean record")))
+                passed &= check(page, "Lekki: approval carries the note",
+                                "Approve, noting the flood risk" in body
+                                or "approve_note_risk" in body)
+                passed &= check(page, "Lekki: no stray field name",
+                                "Value is more than" not in body and "Reading is " not in body)
                 passed &= check(page, "Lekki: no missing-evidence banner",
                                 "kind of evidence is missing" not in body
                                 and "Some evidence is missing" not in body)

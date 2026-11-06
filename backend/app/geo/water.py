@@ -49,6 +49,41 @@ def optical_water(scl: np.ndarray, green: np.ndarray, nir: np.ndarray, ndwi_min:
     return ((scl.astype(int) == SCL_WATER) | (ndwi(green, nir) > ndwi_min)) & usable
 
 
+# Cloud for REPORTING only: it captions the picture so a reader can judge what they are
+# looking at. It never touches a scored metric -- optical_water still uses clear_mask with
+# its 100 m buffer, and the scoring is frozen.
+#
+# SCL alone is not enough. Over the bright built-up surfaces that cover most of Lagos it
+# labelled two obvious cloud blobs "not vegetated": 0.03% cloud on a picture visibly 2%
+# clouded. So SCL's cloud classes are OR'd with a brightness test. Cloud is bright in both
+# the visible and the near infrared and close to spectrally flat; a bright roof is neither
+# that bright nor that flat. The thresholds were chosen against the Okota 2026-01-24 scene:
+# they catch 100% of the visible cloud at 3.1% of the frame, where lowering blue to 0.30
+# reaches 6.6% and starts sweeping in concrete.
+SCL_CLOUD_CLASSES = (SCL_CLOUD_SHADOW, SCL_CLOUD_MED, SCL_CLOUD_HIGH, SCL_CIRRUS)
+CLOUD_BLUE_MIN = 0.40  # surface reflectance
+CLOUD_NIR_MIN = 0.30
+CLOUD_FLATNESS_MAX = 0.25  # |blue - red| / red
+REFLECTANCE_SCALE = 10_000  # Sentinel-2 L2A digital numbers
+
+
+def cloud_mask(scl: np.ndarray, blue: np.ndarray, red: np.ndarray,
+               nir: np.ndarray) -> np.ndarray:
+    """Cloud, cloud shadow and cirrus, as a reader would see them in the picture."""
+    flagged = np.isin(scl.astype(int), SCL_CLOUD_CLASSES)
+    b, r, n = (band.astype("float32") / REFLECTANCE_SCALE for band in (blue, red, nir))
+    flat = np.abs(b - r) / np.maximum(r, 1e-6)
+    bright = (b > CLOUD_BLUE_MIN) & (n > CLOUD_NIR_MIN) & (flat < CLOUD_FLATNESS_MAX)
+    return flagged | bright
+
+
+def cloud_fraction(scl: np.ndarray, blue: np.ndarray, red: np.ndarray, nir: np.ndarray,
+                   area: np.ndarray | None = None) -> float:
+    """Share of `area` (default: the whole frame) under cloud, 0-1."""
+    mask = cloud_mask(scl, blue, red, nir)
+    return float(mask.mean() if area is None else mask[area].mean() if area.any() else 0.0)
+
+
 def to_db(linear: np.ndarray) -> np.ndarray:
     return 10 * np.log10(np.maximum(linear.astype("float32"), 1e-6))
 

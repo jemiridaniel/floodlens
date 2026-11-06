@@ -29,8 +29,9 @@ import anyio.to_thread
 from pydantic import BaseModel
 
 from .evidence import evidence_pngs, water_within
-from .geo.aoi import Site
+from .geo.aoi import Site, ring_mask
 from .geo.sources import PlanetaryComputerSource
+from .geo.water import cloud_fraction
 from .photos import MAX_PHOTOS, Photo, save_photo, segment_all, to_png
 from .pipeline import assemble
 from .schemas import AgentRun, Assessment, FloodReport, Metric, Report
@@ -118,7 +119,8 @@ class AssessmentView(BaseModel):
     photos: list[PhotoView] = []
     # Context for the evidence images, so the UI never has to parse a metric label.
     optical_date: str | None = None
-    optical_cloud_pct: float | None = None
+    optical_cloud_pct: float | None = None  # over the picture, which the caption describes
+    optical_ring_cloud_pct: float | None = None  # over the 500 m ring the metrics use
     water_layers: dict[str, bool] = {}  # layer -> any water within 1 km
     report: Report | None = None
     run: AgentRun | None = None
@@ -151,6 +153,7 @@ class Job:
     assessment: Assessment | None = None
     optical_date: str | None = None
     optical_cloud_pct: float | None = None
+    optical_ring_cloud_pct: float | None = None
     water_layers: dict[str, bool] = field(default_factory=dict)
     cached: Any = None  # a saved AssessmentView, when this job is a demo replay
     history: Any = None
@@ -316,7 +319,11 @@ async def _area_screen(job: Job, site: Site, source: Any):
         job.water_layers = await in_thread(water_within, layers)
         if layers.optical is not None:
             job.optical_date = layers.optical.date
-            job.optical_cloud_pct = round(100 * layers.optical.tile_cloud, 1)
+            # the caption describes the picture, not the 110 km tile it was cut from
+            job.optical_cloud_pct = round(100 * layers.optical.image_cloud, 1)
+            o = layers.optical
+            job.optical_ring_cloud_pct = round(100 * cloud_fraction(
+                o.scl, o.blue, o.red, o.nir, ring_mask(layers.grid, 500)), 1)
         have = [n for n in ("optical", "radar", "jrc_occurrence", "dem", "landcover")
                 if getattr(layers, n, None) is not None or n in layers.item_ids]
         job.step(AREA, "done", _ms(t0), f"{len(have)} layers: {', '.join(have)}")
@@ -465,6 +472,7 @@ def view(job: Job, base: str = "") -> AssessmentView:
         photos=photos,
         optical_date=job.optical_date,
         optical_cloud_pct=job.optical_cloud_pct,
+        optical_ring_cloud_pct=job.optical_ring_cloud_pct,
         water_layers=dict(job.water_layers),
         report=job.run.report if job.run else None,
         run=job.run,

@@ -139,3 +139,48 @@ def test_the_bare_claim_is_still_rejected():
     v = verify("This site scores 42.5 and is High tier.", "High", "approve_with_insurance",
                METRICS, FLOORED)
     assert not v.ok and any("credits the score" in e for e in v.errors)
+
+
+# ------------------------------------------- no street reports means no clean-history claim
+def test_a_clean_history_claim_is_rejected_when_nothing_was_found():
+    """A news search that finds nothing says something about the search, not the site."""
+    for claim in ("Regular water is far away and history is clean.",
+                  "There is no history of flooding at this address.",
+                  "The site has never flooded.",
+                  "No record of flooding in this area.",
+                  "A clean flood record supports approval.",
+                  "The history shows no problems here.",
+                  "The site is free of flooding."):
+        v = verify(claim, "High", "approve_with_insurance", METRICS, SCORE,
+                   has_street_reports=False)
+        assert not v.ok, claim
+        assert any("cannot claim a clean history" in e for e in v.errors), claim
+
+
+def test_the_required_sentence_is_not_mistaken_for_a_clean_history_claim():
+    from app.agent.loop import NO_STREET_REPORTS
+    v = verify(NO_STREET_REPORTS, "High", "approve_with_insurance", METRICS, SCORE,
+               has_street_reports=False)
+    assert v.ok, v.errors
+
+
+def test_reporting_what_the_search_found_is_allowed():
+    for fine in ("The search returned nothing, and news coverage is uneven.",
+                 "No street-level flood reports were returned for this street.",
+                 "Water history within 500 m since 1984 was checked."):
+        v = verify(fine, "High", "approve_with_insurance", METRICS, SCORE,
+                   has_street_reports=False)
+        assert v.ok, (fine, v.errors)
+
+
+def test_the_rule_is_silent_when_street_reports_exist():
+    v = verify("Regular water is far away and history is clean.", "High",
+               "approve_with_insurance", METRICS, SCORE, has_street_reports=True)
+    assert v.ok, v.errors
+
+
+def test_the_action_is_checked_against_what_this_site_allows():
+    from app.schemas import Action
+    v = verify("Fine.", "High", "approve_with_insurance", METRICS, SCORE,
+               allowed_actions=[Action.adjust_terms])
+    assert not v.ok and any("not allowed here" in e for e in v.errors)

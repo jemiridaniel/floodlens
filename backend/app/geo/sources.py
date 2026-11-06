@@ -13,7 +13,7 @@ from rasterio.enums import Resampling
 from ..config import OPEN_METEO_ARCHIVE, STAC_URL
 from .aoi import Grid, Site, bbox
 from .raster import read_window
-from .water import clear_mask
+from .water import clear_mask, cloud_fraction
 
 GRID = Grid(size_m=2000, res_m=10)  # 200 x 200 px at Sentinel-2 native resolution
 
@@ -56,7 +56,8 @@ class Optical:
     # cheap 64 x 64 estimate over the 2 km window, used only to pick the clearest scene,
     # and it reads 0% often enough that showing it as "cloud" was misleading.
     tile_cloud: float  # 0-1, whole tile (eo:cloud_cover)
-    grid_cloud: float  # 0-1, the 2 km window around the site
+    grid_cloud: float  # 0-1, the 2 km window, from the cheap 64 px selection pass
+    image_cloud: float  # 0-1, the 2 km window at full resolution: what the picture shows
     scl: np.ndarray
     blue: np.ndarray
     green: np.ndarray
@@ -142,16 +143,17 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
     def band(name: str, rs=Resampling.bilinear) -> np.ndarray:
         return read_window(item.assets[name].href, site, GRID, rs)
 
+    scl, blue, green, red, nir = (band("SCL", Resampling.nearest), band("B02"), band("B03"),
+                                  band("B04"), band("B08"))
     return Optical(
         item_id=item.id,
         date=item.properties["datetime"][:10],
         tile_cloud=round(tile_cloud_fraction(item), 3),
         grid_cloud=round(grid_cloud, 3),
-        scl=band("SCL", Resampling.nearest),
-        blue=band("B02"),
-        green=band("B03"),
-        red=band("B04"),
-        nir=band("B08"),
+        # measured on exactly the pixels the report shows, so the caption cannot drift
+        # from the picture it captions
+        image_cloud=round(cloud_fraction(scl, blue, red, nir), 3),
+        scl=scl, blue=blue, green=green, red=red, nir=nir,
     )
 
 

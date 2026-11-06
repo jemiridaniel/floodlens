@@ -119,6 +119,32 @@ ALLOWED_ACTIONS: dict[Tier, list[Action]] = {
 }
 
 
+# Built-up share within 500 m above which a site is treated as urban for the action rule.
+# Same bar the baseline sampler uses for "built-up land", so the two agree on the word.
+BUILT_UP_FOR_NOTE = 50.0
+
+
+def allowed_actions(tier: Tier, has_street_reports: bool = True,
+                    built_up_pct: float | None = None) -> list[Action]:
+    """What the officer may do, given the tier and how much the evidence can support.
+
+    A plain "approve" reads as a clean bill of health. In a built-up area where the news
+    search found nothing at street level, that is exactly the inference we cannot support:
+    the baseline showed 27 of 30 random Lagos addresses turn up some flood report, and the
+    places news covers worst are not the places that flood least. So the approval has to
+    carry the note. It is a floor on caution, never a relaxation.
+    """
+    actions = list(ALLOWED_ACTIONS[tier])
+    if has_street_reports or (built_up_pct or 0) < BUILT_UP_FOR_NOTE:
+        return actions
+    noted: list[Action] = []
+    for action in actions:
+        swapped = Action.approve_note if action is Action.approve else action
+        if swapped not in noted:
+            noted.append(swapped)
+    return noted
+
+
 def tier_for(score: float) -> Tier:
     for cut, tier in TIER_CUTS:
         if score >= cut:

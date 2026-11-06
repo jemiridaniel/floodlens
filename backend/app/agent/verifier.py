@@ -10,7 +10,12 @@ Rules:
 4. The recommended action must be allowed for that tier.
 5. Any required sentence must appear verbatim. This is how the "no street-level flood
    reports" caveat is made non-optional rather than left to the model's judgement.
-6. When an evidence rule raised the tier above the weighted score, the report may not
+6. Where no street-level flood report was found, the report may not write as though the
+   site has a clean flood history. We did not look at a flood register; we ran a news
+   search that covers some parts of Lagos far better than others. "History is clean" is a
+   claim about the world; "no reports found" is a claim about our search, and only the
+   second one is true.
+7. When an evidence rule raised the tier above the weighted score, the report may not
    write as though the score earned it. "Scores 42.5 and is High tier" is false: 42.5 is
    Moderate, and the tier came from two verified street-level floods. A reader who
    believes the score produced the tier will mistrust the number or the tier, and both
@@ -55,6 +60,41 @@ def _matches(x: float, allowed: list[tuple[float, int]]) -> bool:
 
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
+# Wordings that assert the site has no flood history, rather than reporting what the
+# search found. Deliberately narrow: "no street-level flood reports found" is the
+# required sentence and must not match any of these.
+CLEAN_HISTORY_CLAIMS = (
+    (r"\bhistory\s+(?:is|was|looks|appears|remains)\s+clean\b", "says the history is clean"),
+    (r"\bclean\s+(?:flood\s+)?(?:history|record)\b", "calls the record clean"),
+    (r"\bno\s+(?:flood|flooding)\s+history\b", "asserts no flood history"),
+    (r"\bno\s+history\s+of\s+(?:flood|flooding)\b", "asserts no history of flooding"),
+    (r"\bnever\s+(?:been\s+)?flooded\b", "asserts the site never flooded"),
+    (r"\bno\s+(?:past|previous|prior|recorded|known)\s+flood", "asserts no past flooding"),
+    (r"\bno\s+record\s+of\s+(?:flood|flooding)\b", "asserts no record of flooding"),
+    (r"\bhistory\s+shows?\s+no\b", "says the history shows nothing"),
+    (r"\b(?:free\s+of|unaffected\s+by)\s+flood", "calls the site free of flooding"),
+    (r"\bnot\s+flooded\s+(?:before|in\s+the\s+past)\b", "asserts it has not flooded"),
+)
+
+
+def clean_history_errors(text: str) -> list[str]:
+    """Catch a report claiming the site has no flood history when none was established.
+
+    A news search that finds nothing says something about the search, not about the site:
+    Lagos coverage is uneven, and the places least covered are not the places least
+    flooded. The report may say what the search found and must not go beyond it.
+    """
+    flat = " ".join(text.split())
+    errors = []
+    for pattern, what in CLEAN_HISTORY_CLAIMS:
+        found = re.search(pattern, flat, re.I)
+        if found:
+            errors.append(
+                f"no street-level flood report was found for this site, so the report cannot "
+                f"claim a clean history: this {what} ({found.group(0)!r}). Say what the search "
+                f"found, not what the site has never done.")
+    return errors
+
 
 # Phrases that show a sentence is attributing the tier to the rule rather than the score.
 FLOOR_LANGUAGE = re.compile(r"held at|evidence rule|raised to|floor", re.I)
@@ -88,13 +128,17 @@ def floored_tier_errors(text: str, score: Score) -> list[str]:
 
 
 def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Score,
-           extra_allowed: set[float] | None = None, required: list[str] | None = None) -> Verdict:
+           extra_allowed: set[float] | None = None, required: list[str] | None = None,
+           allowed_actions: list[Action] | None = None,
+           has_street_reports: bool = True) -> Verdict:
     errors: list[str] = []
     flat = " ".join(text.split())
     for phrase in required or []:
         if " ".join(phrase.split()) not in flat:
             errors.append(f"the report must contain this sentence exactly: {phrase!r}")
     errors += floored_tier_errors(text, score)
+    if not has_street_reports:
+        errors += clean_history_errors(text)
     allowed = [(m.value, m.decimals) for m in metrics] + [(score.score, 1)]
     ok_set = ALWAYS_OK | (extra_allowed or set())
 
@@ -125,7 +169,9 @@ def verify(text: str, tier: str, action: str, metrics: list[Metric], score: Scor
     except ValueError:
         errors.append(f"unknown action {action!r}")
         act = None
-    if act is not None and act not in ALLOWED_ACTIONS[score.tier]:
-        errors.append(f"action {act.value} is not allowed for tier {score.tier.value}")
+    permitted = ALLOWED_ACTIONS[score.tier] if allowed_actions is None else allowed_actions
+    if act is not None and act not in permitted:
+        errors.append(f"action {act.value} is not allowed here; permitted: "
+                      + ", ".join(a.value for a in permitted))
 
     return Verdict(ok=not errors, errors=errors)

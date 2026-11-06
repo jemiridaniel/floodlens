@@ -8,7 +8,7 @@ from .geo.aoi import Site
 from .geo.sources import LayerSource
 from .metrics import compute_metrics
 from .schemas import Assessment, AssessmentRequest
-from .scoring import ALLOWED_ACTIONS, score
+from .scoring import allowed_actions, score
 
 
 def assess(req: AssessmentRequest, source: LayerSource,
@@ -37,6 +37,7 @@ def assemble(req: AssessmentRequest, layers, history=None) -> Assessment:
         street_events = len(distinct_events(
             [r for r in history.reports if r.match_level == "street"]))
     s = score(metrics, street_events=street_events)
+    built_up = next((m.value for m in metrics if m.id == "m_built_up_500"), None)
     evidence = dict(layers.item_ids)
     if layers.optical:
         evidence["optical"] = layers.optical.item_id
@@ -55,7 +56,7 @@ def assemble(req: AssessmentRequest, layers, history=None) -> Assessment:
         id=uuid.uuid4().hex[:12],
         lat=req.lat, lon=req.lon, label=req.label,
         metrics=metrics, score=s,
-        allowed_actions=ALLOWED_ACTIONS[s.tier],
+        allowed_actions=allowed_actions(s.tier, street, built_up),
         evidence=evidence,
         notes=notes,
         has_street_reports=street,

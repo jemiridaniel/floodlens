@@ -143,8 +143,10 @@ def main() -> int:
                 passed &= check(page, "Lekki: one news-coverage limit only",
                                 sum(1 for w in ("news", "coverage") if w in limits.lower())
                                 and limits.lower().count("covers some") <= 1)
-                passed &= check(page, "Lekki: no duplicate limit bullets",
-                                body.count("This does not mean the site is safe.") <= 2)
+                limits_only = body.split("What this report cannot tell you")[-1]
+                passed &= check(page, "Lekki: the sentence is shown twice, not three times",
+                                body.count("This does not mean the site is safe.") == 2
+                                and "This does not mean the site is safe." not in limits_only)
 
             if "fresh" in wanted:
                 run_flow(page, "fresh", tag, photos=photos, catch_progress=True)

@@ -176,3 +176,40 @@ def test_scl_cloud_classes_are_counted_even_when_not_bright():
     scl[0:20, 0:20] = 3   # cloud shadow: dark, so only SCL can find it
     scl[20:30, 0:20] = 10  # cirrus: thin, so only SCL can find it
     assert cloud_fraction(scl, blue, red, nir) == pytest.approx(600 / 40000, abs=0.002)
+
+
+def test_cloud_is_reported_as_uncertain_when_the_classifier_missed_it():
+    """A classifier that misses cloud also misses its shadow, and no brightness test can
+    find shadow because shadow is dark. The share is then a floor, not a measurement."""
+    from app.geo.water import cloud_report
+    scl, blue, red, nir = _tile(cloud_px=(slice(80, 120), slice(80, 120)))
+    share, certain = cloud_report(scl, blue, red, nir)
+    assert share == pytest.approx(0.04, abs=0.002)
+    assert certain is False  # SCL saw none of it
+
+
+def test_cloud_the_classifier_found_is_reported_with_confidence():
+    import numpy as np
+
+    from app.geo.water import cloud_report
+    scl, blue, red, nir = _tile()
+    scl[80:120, 80:120] = 9   # cloud high, and the pixels are bright too
+    blue[80:120, 80:120], red[80:120, 80:120], nir[80:120, 80:120] = 4900, 5600, 6000
+    share, certain = cloud_report(scl, blue, red, nir)
+    assert share == pytest.approx(0.04, abs=0.002)
+    assert certain is True
+    assert np.isin(scl.astype(int), (3, 8, 9, 10)).any()
+
+
+def test_cloud_shadow_is_counted_and_keeps_confidence():
+    from app.geo.water import cloud_report
+    scl, blue, red, nir = _tile()
+    scl[0:20, 0:20] = 3  # cloud shadow: dark, so only the classifier can see it
+    share, certain = cloud_report(scl, blue, red, nir)
+    assert share == pytest.approx(400 / 40000, abs=0.002)
+    assert certain is True
+
+
+def test_a_clear_scene_is_certain():
+    from app.geo.water import cloud_report
+    assert cloud_report(*_tile()) == (0.0, True)

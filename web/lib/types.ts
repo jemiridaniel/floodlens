@@ -156,6 +156,9 @@ export interface AssessmentView {
   optical_cloud_pct: number | null;
   /** Cloud over the 500 m ring, where the water metrics are actually measured. */
   optical_ring_cloud_pct: number | null;
+  /** False when the scene classifier missed the cloud: its shadow is uncounted too, so
+   *  the share is a floor and the caption says "partly cloudy" rather than a figure. */
+  optical_cloud_certain: boolean;
   /** layer name -> whether it found any water within 1 km. All false means the three
    *  mask images are blank squares, and one sentence says more than three of those. */
   water_layers: Record<string, boolean>;
@@ -172,6 +175,12 @@ export interface AssessmentView {
  *  or fallback report must say it too. */
 export const NO_STREET_REPORTS =
   "No street-level flood reports found. This does not mean the site is safe.";
+
+/** Headings are real sentence case, not a CSS first-letter trick: the name is also used
+ *  mid-sentence in the missing-evidence banner, where lower case is correct. */
+export function sentenceCase(name: string): string {
+  return name ? name[0].toUpperCase() + name.slice(1) : name;
+}
 
 export const GROUP_BLURB: Record<string, string> = {
   "local history": "News reports of flooding at this street or area, each checked against the page it came from.",

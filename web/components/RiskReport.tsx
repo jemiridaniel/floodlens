@@ -10,6 +10,7 @@ import {
   type GroupView,
   type MatchLevel,
   metricText,
+  sentenceCase,
 } from "@/lib/types";
 import {
   Card,
@@ -134,15 +135,21 @@ export function RiskReport({ view }: { view: AssessmentView }) {
   // numbers come from, and it is the thing worth doubting.
   const ringCloud = view.optical_ring_cloud_pct;
   const viewCloud = view.optical_cloud_pct;
-  const opticalCaption = view.optical_date
-    ? `, ${view.optical_date}${
-        viewCloud != null ? `, ${viewCloud.toFixed(0)}% cloud in this view` : ""
-      }${
-        ringCloud != null && viewCloud != null && ringCloud >= viewCloud + 2
-          ? ` (${ringCloud.toFixed(0)}% over the 500 m ring)`
-          : ""
-      }`
-    : "";
+  // Where the scene classifier missed the cloud it also missed the shadow, so the share
+  // is a floor. Saying "partly cloudy" is honest; quoting 3% would not be.
+  const cloudWords =
+    viewCloud == null
+      ? ""
+      : !view.optical_cloud_certain && viewCloud > 0
+        ? ", partly cloudy (cloud shadow may not be counted)"
+        : viewCloud < 0.5
+          ? ", clear"
+          : `, ${viewCloud.toFixed(0)}% cloud in this view${
+              ringCloud != null && ringCloud >= viewCloud + 2
+                ? ` and ${ringCloud.toFixed(0)}% over the 500 m ring`
+                : ""
+            }`;
+  const opticalCaption = view.optical_date ? `, ${view.optical_date}${cloudWords}` : "";
 
   // One list, no repeats. The model paraphrases the standing limits in its own words, so
   // matching on wording is not enough: both lists are bucketed by topic and the
@@ -173,14 +180,16 @@ export function RiskReport({ view }: { view: AssessmentView }) {
   for (const note of a.notes) if (note.startsWith("NO ")) standing.push(note);
 
   const covered = new Set(standing.map(topicOf).filter(Boolean));
-  const required = (report?.caveats ?? []).filter((c) => c.includes(NO_STREET_REPORTS));
+  // The mandatory sentence is already shown twice above: under the tier in the verdict
+  // card, and beside the (empty) list of reports. A third copy in the limits reads as
+  // padding and makes the list look longer than it is.
   const fromAgent = (report?.caveats ?? []).filter(
     (c) => !c.includes(NO_STREET_REPORTS) && !covered.has(topicOf(c)),
   );
 
   const seen = new Set<string>();
   const limits: string[] = [];
-  for (const line of [...required, ...fromAgent, ...standing]) {
+  for (const line of [...fromAgent, ...standing]) {
     const k = line.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean)
       .slice(0, 6).join(" ");
     if (!k || seen.has(k)) continue;
@@ -251,7 +260,7 @@ export function RiskReport({ view }: { view: AssessmentView }) {
           {view.groups.map((group) => (
             <div key={group.name}>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-sm font-semibold first-letter:uppercase">{group.name}</h3>
+                <h3 className="text-sm font-semibold">{sentenceCase(group.name)}</h3>
                 {!group.present && (
                   <span className="rounded-full bg-high-bg px-2.5 py-0.5 text-xs font-semibold text-high-ink">
                     missing

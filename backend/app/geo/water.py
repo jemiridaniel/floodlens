@@ -84,6 +84,33 @@ def cloud_fraction(scl: np.ndarray, blue: np.ndarray, red: np.ndarray, nir: np.n
     return float(mask.mean() if area is None else mask[area].mean() if area.any() else 0.0)
 
 
+# When the brightness test finds most of the cloud, the scene classifier has missed it --
+# and a classifier that misses cloud also misses that cloud's shadow, which no brightness
+# test can find because shadow is dark. The figure is then a floor, not a measurement, and
+# the report should say "partly cloudy" rather than quote a number that looks exact.
+SCL_SHARE_FOR_CONFIDENCE = 0.75
+
+
+def cloud_report(scl: np.ndarray, blue: np.ndarray, red: np.ndarray, nir: np.ndarray,
+                 area: np.ndarray | None = None) -> tuple[float, bool]:
+    """(share under cloud, is the share trustworthy).
+
+    Cloud shadow is counted when Sentinel-2's own classifier flags it. It cannot be
+    counted when the classifier missed the cloud overhead, so that case is reported as
+    uncertain instead of quietly under-stating.
+    """
+    flagged = np.isin(scl.astype(int), SCL_CLOUD_CLASSES)
+    total = cloud_mask(scl, blue, red, nir)
+    if area is not None:
+        if not area.any():
+            return 0.0, True
+        flagged, total = flagged[area], total[area]
+    share = float(total.mean())
+    if share == 0:
+        return 0.0, True
+    return share, bool(flagged.sum() >= SCL_SHARE_FOR_CONFIDENCE * total.sum())
+
+
 def to_db(linear: np.ndarray) -> np.ndarray:
     return 10 * np.log10(np.maximum(linear.astype("float32"), 1e-6))
 

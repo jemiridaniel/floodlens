@@ -13,7 +13,7 @@ from rasterio.enums import Resampling
 from ..config import OPEN_METEO_ARCHIVE, STAC_URL
 from .aoi import Grid, Site, bbox
 from .raster import read_window
-from .water import clear_mask, cloud_fraction
+from .water import clear_mask, cloud_report
 
 GRID = Grid(size_m=2000, res_m=10)  # 200 x 200 px at Sentinel-2 native resolution
 
@@ -63,6 +63,9 @@ class Optical:
     green: np.ndarray
     red: np.ndarray
     nir: np.ndarray
+    # False when the classifier missed the cloud: its shadow is then uncounted too, so the
+    # share is a floor and the report says "partly cloudy" rather than a crisp figure.
+    cloud_certain: bool = True
 
 
 @dataclass
@@ -145,6 +148,7 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
 
     scl, blue, green, red, nir = (band("SCL", Resampling.nearest), band("B02"), band("B03"),
                                   band("B04"), band("B08"))
+    image_share, cloud_certain = cloud_report(scl, blue, red, nir)
     return Optical(
         item_id=item.id,
         date=item.properties["datetime"][:10],
@@ -152,8 +156,9 @@ def clearest_optical(catalog, site: Site, dates: str, max_checks: int = 12) -> O
         grid_cloud=round(grid_cloud, 3),
         # measured on exactly the pixels the report shows, so the caption cannot drift
         # from the picture it captions
-        image_cloud=round(cloud_fraction(scl, blue, red, nir), 3),
+        image_cloud=round(image_share, 3),
         scl=scl, blue=blue, green=green, red=red, nir=nir,
+        cloud_certain=cloud_certain,
     )
 
 

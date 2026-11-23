@@ -47,9 +47,9 @@ app = modal.App(APP_NAME)
     secrets=[secret],
     volumes={str(DATA): volume},
     timeout=900,  # a cold assessment is ~2 min; this is headroom, not an expectation
-    min_containers=1,  # stay warm: a demo should not wait on a cold start
+    min_containers=0,  # nothing stays warm when idle; the first request pays a cold start
     max_containers=1,  # in-memory jobs and streams: see the module docstring
-    scaledown_window=1200,
+    scaledown_window=300,
 )
 @modal.concurrent(max_inputs=50)  # SSE streams sit open; they must not each pin a container
 @modal.asgi_app()
